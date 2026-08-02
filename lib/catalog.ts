@@ -272,10 +272,19 @@ export const CATALOG: NodeDef[] = [
     provider: 'gmicloud-image',
     model: 'bria-genfill',
     cost: 0.02,
-    inputs: [promptIn('Prompt', false), imageIn(), maskIn()],
+    // Mask is optional: connect a Format and the mask is derived from the
+    // breakpoint geometry — the plate is seated at the focal point and
+    // everything else is filled. Connect a mask instead for manual inpainting.
+    inputs: [
+      promptIn('Prompt', false),
+      imageIn(),
+      {id: 'format', name: 'Format', type: 'format', isRequired: false},
+      maskIn(false),
+    ],
     outputs: [imageOut()],
-    params: [RESOLUTION, STRENGTH, ...GEN_TAIL],
-    description: 'Fills a masked region. Use to extend a scene into a taller or wider breakpoint.',
+    params: [STRENGTH, ...GEN_TAIL],
+    description:
+      'Recomposes a plate onto a breakpoint. Connect a Format and the empty region is filled to match.',
   },
   {
     type: 'eraser',

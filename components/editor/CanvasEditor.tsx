@@ -11,6 +11,7 @@ import {estimateNodeHeight} from '@/components/canvas/node-metrics';
 import {defaultParams, getNodeDef} from '@/lib/catalog';
 import {fitViewport, graphBounds, type Viewport} from '@/lib/canvas-geometry';
 import {toRunFormat} from '@/lib/formats';
+import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
 import {useMediaQuery} from '@/lib/use-media-query';
 import {executeRun, toAssetRef, toProvenance} from '@/lib/workflow-service';
 import type {Edge, NodeCategory, ParamValue, PegNode, Workflow} from '@/lib/types';
@@ -44,6 +45,25 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
 
   const isNarrow = useMediaQuery('(max-width: 1100px)');
   const isVeryNarrow = useMediaQuery('(max-width: 820px)');
+
+  // Mirrors of graph state for the run engine. A chained run needs values
+  // written by earlier steps of the same chain, which a render-time closure
+  // cannot see.
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+
+  /** Commit to React and the run engine's synchronous snapshot together. */
+  const updateNodes = useCallback((updater: (current: PegNode[]) => PegNode[]) => {
+    const next = updater(nodesRef.current);
+    nodesRef.current = next;
+    setNodes(next);
+  }, []);
+
+  const updateEdges = useCallback((updater: (current: Edge[]) => Edge[]) => {
+    const next = updater(edgesRef.current);
+    edgesRef.current = next;
+    setEdges(next);
+  }, []);
 
   const canvasHostRef = useRef<HTMLDivElement>(null);
   /** Set once the user pans/zooms, so auto-fit stops fighting them. */
@@ -106,20 +126,31 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
 
   // ------------------------------------------------------------ graph edits
   const moveNode = useCallback((id: string, x: number, y: number) => {
-    setNodes(prev => prev.map(n => (n.id === id ? {...n, x, y} : n)));
-  }, []);
+    updateNodes(current => current.map(n => (n.id === id ? {...n, x, y} : n)));
+  }, [updateNodes]);
 
   const connect = useCallback((edge: Omit<Edge, 'id'>) => {
-    setEdges(prev => [...prev, {...edge, id: `e-${crypto.randomUUID().slice(0, 8)}`}]);
-  }, []);
+    updateEdges(current => [...current, {...edge, id: `e-${crypto.randomUUID().slice(0, 8)}`}]);
+  }, [updateEdges]);
 
   const deleteEdge = useCallback((id: string) => {
-    setEdges(prev => prev.filter(e => e.id !== id));
-  }, []);
+    updateEdges(current => current.filter(e => e.id !== id));
+  }, [updateEdges]);
 
   const updateParam = useCallback((nodeId: string, key: string, value: ParamValue) => {
-    setNodes(prev => prev.map(n => (n.id === nodeId ? {...n, params: {...n.params, [key]: value}} : n)));
-  }, []);
+    updateNodes(current =>
+      current.map(n =>
+        n.id === nodeId
+          ? {
+              ...n,
+              params: {...n.params, [key]: value},
+              // Brief cards and their inspector field are two views of one value.
+              text: n.type === 'prompt' && key === 'value' ? String(value) : n.text,
+            }
+          : n,
+      ),
+    );
+  }, [updateNodes]);
 
   const addNode = useCallback(
     (type: string) => {
@@ -148,18 +179,20 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         outputs: def.outputs,
         text: def.type === 'prompt' ? '' : undefined,
       };
-      setNodes(prev => [...prev, node]);
+      updateNodes(current => [...current, node]);
       setSelectedIds([id]);
     },
-    [viewport],
+    [updateNodes, viewport],
   );
 
   const deleteSelection = useCallback(() => {
     if (selectedIds.length === 0) return;
-    setNodes(prev => prev.filter(n => !selectedIds.includes(n.id)));
-    setEdges(prev => prev.filter(e => !selectedIds.includes(e.fromNode) && !selectedIds.includes(e.toNode)));
+    updateNodes(current => current.filter(n => !selectedIds.includes(n.id)));
+    updateEdges(current =>
+      current.filter(e => !selectedIds.includes(e.fromNode) && !selectedIds.includes(e.toNode)),
+    );
     setSelectedIds([]);
-  }, [selectedIds]);
+  }, [selectedIds, updateEdges, updateNodes]);
 
   // --------------------------------------------------------------- running
   /**
@@ -172,9 +205,15 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
    */
   const resolveInputs = useCallback(
     (node: PegNode) => {
+      // Read through refs, not the render closure. A chained run needs the
+      // upstream node's *just-written* result — the plate that step 1 produced —
+      // and a closure captured before the chain started would still show it empty.
+      const currentNodes = nodesRef.current;
+      const currentEdges = edgesRef.current;
+
       const sourceOf = (target: PegNode, portId: string) => {
-        const edge = edges.find(e => e.toNode === target.id && e.toPort === portId);
-        return edge ? nodes.find(n => n.id === edge.fromNode) : undefined;
+        const edge = currentEdges.find(e => e.toNode === target.id && e.toPort === portId);
+        return edge ? currentNodes.find(n => n.id === edge.fromNode) : undefined;
       };
 
       /**
@@ -189,7 +228,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         if (seen.has(start.id)) return ''; // cycles are possible; the graph is user-built
         seen.add(start.id);
 
-        const own = (start.text ?? String(start.params.value ?? '')).trim();
+        const own = String(start.params.value ?? '').trim() || (start.text ?? '').trim();
         if (own) return own;
 
         const upstream = sourceOf(start, 'prompt');
@@ -197,51 +236,66 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
       };
 
       const formatNode = sourceOf(node, 'format');
+      const styleNode = sourceOf(node, 'style');
       const imageNode =
         sourceOf(node, 'image') ?? sourceOf(node, 'base') ?? sourceOf(node, 'asset');
 
       const upstreamPrompt = sourceOf(node, 'prompt');
       return {
         prompt: upstreamPrompt ? resolvePrompt(upstreamPrompt) : resolvePrompt(node),
+        styleNotes: String(styleNode?.params.notes ?? '').trim(),
         format: formatNode ? toRunFormat(formatNode.params) : undefined,
         sourceAssetKey: imageNode?.result?.assetKey,
       };
     },
-    [edges, nodes],
+    [],
   );
 
   const patchNode = useCallback((id: string, patch: Partial<PegNode>) => {
-    setNodes(prev => prev.map(n => (n.id === id ? {...n, ...patch} : n)));
-  }, []);
+    updateNodes(current => current.map(n => (n.id === id ? {...n, ...patch} : n)));
+  }, [updateNodes]);
 
   const runNode = useCallback(
-    async (node: PegNode) => {
-      if (!node.model) return;
-      const {prompt, format, sourceAssetKey} = resolveInputs(node);
+    async (node: PegNode): Promise<boolean> => {
+      if (!isExecutableNode(node)) return false;
+      const {prompt, styleNotes, format, sourceAssetKey} = resolveInputs(node);
+      const directedPrompt = styleNotes
+        ? `${prompt}\n\nBrand look to preserve: ${styleNotes}`.trim()
+        : prompt;
 
-      // Outpaint when there is an upstream plate and a target to hit.
-      const isOutpaint = Boolean(sourceAssetKey && format);
+      // Outpaint is the explicit Extend Canvas job, not a generic property of
+      // every image model that happens to have image and format inputs.
+      const isOutpaint = node.type === 'genfill' && Boolean(sourceAssetKey && format);
 
       // Fail here rather than spending a call the API will reject anyway.
-      if (!prompt && !isOutpaint) {
+      if (!directedPrompt && !isOutpaint) {
         patchNode(node.id, {
           status: 'error',
           error: 'No prompt. Connect a Brief node, or type one into this node.',
         });
-        return;
+        return false;
       }
 
       patchNode(node.id, {status: 'queued', error: undefined});
 
       try {
+        const params: Record<string, string | number | boolean> = {};
+        if (!Boolean(node.params.randomSeed) && node.params.seed != null) {
+          params.seed = Number(node.params.seed);
+        }
+        if (node.params.strength != null) params.strength = Number(node.params.strength);
+        if (node.params.numberOfImages != null) {
+          params.number_of_images = Number(node.params.numberOfImages);
+        }
+
         const result = await executeRun(
           {
             operation: isOutpaint ? 'outpaint' : 'generate',
             node_id: node.id,
             model: node.model,
-            prompt,
+            prompt: directedPrompt,
             negative_prompt: String(node.params.negativePrompt ?? '') || undefined,
-            params: {seed: Number(node.params.seed ?? 0)},
+            params,
             source_asset_key: isOutpaint ? sourceAssetKey : undefined,
             format: isOutpaint ? format : undefined,
           },
@@ -257,20 +311,58 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           provenance: toProvenance(result, node.id),
           error: undefined,
         });
+        return true;
       } catch (error) {
         patchNode(node.id, {status: 'error', error: (error as Error).message});
+        return false;
       }
     },
     [patchNode, resolveInputs],
   );
 
+  /**
+   * Run a set of nodes in dependency order, sequentially.
+   *
+   * Sequential on purpose: GMI drops submits under load, and the service caps
+   * concurrency regardless. Failed dependencies suppress only their own
+   * descendants, so one failed breakpoint does not cancel its siblings.
+   */
+  const runNodes = useCallback(
+    async (ids: string[]) => {
+      const runnableIds = ids.filter(id => {
+        const node = nodesRef.current.find(n => n.id === id);
+        return node ? isExecutableNode(node) : false;
+      });
+
+      await executeInDependencyOrder({
+        ids: runnableIds,
+        edges: edgesRef.current,
+        // Re-read here, after the preceding step updated nodesRef synchronously.
+        run: async id => {
+          const node = nodesRef.current.find(n => n.id === id);
+          return node ? runNode(node) : false;
+        },
+        onSkip: (id, reason) =>
+          patchNode(id, {
+            status: 'error',
+            error:
+              reason.kind === 'dependency-cycle'
+                ? 'Run skipped: dependency cycle detected.'
+                : 'Run skipped because an upstream node failed.',
+          }),
+      });
+    },
+    [patchNode, runNode],
+  );
+
   const runSelected = useCallback(() => {
-    // Sequential: GMI is flaky under load and the service caps concurrency anyway.
-    void selectedNodes.filter(n => n.model).reduce(
-      (chain, node) => chain.then(() => runNode(node)),
-      Promise.resolve(),
-    );
-  }, [runNode, selectedNodes]);
+    void runNodes(selectedIds);
+  }, [runNodes, selectedIds]);
+
+  /** Run the whole graph — the fan-out in one click, for the demo. */
+  const runAll = useCallback(() => {
+    void runNodes(nodesRef.current.map(n => n.id));
+  }, [runNodes]);
 
   const isRunning = nodes.some(n => n.status === 'queued' || n.status === 'running');
 
@@ -294,14 +386,24 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
     return () => window.removeEventListener('keydown', onKey);
   }, [deleteSelection, fitToViewManual]);
 
-  const totalCost = selectedNodes.reduce((sum, n) => sum + n.cost, 0);
+  const totalCost = selectedNodes
+    .filter(isExecutableNode)
+    .reduce((sum, n) => sum + n.cost, 0);
 
   return (
     <AppShell
       contentPadding={0}
       variant="section"
       mobileNav={false}
-      topNav={<EditorTopBar name={name} onNameChange={setName} nodeCount={nodes.length} />}>
+      topNav={
+        <EditorTopBar
+          name={name}
+          onNameChange={setName}
+          nodeCount={nodes.length}
+          isRunning={isRunning}
+          onRunAll={runAll}
+        />
+      }>
       <Layout
         start={
           <HStack gap={0} style={{blockSize: '100%'}}>

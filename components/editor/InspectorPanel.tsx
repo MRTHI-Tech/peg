@@ -17,6 +17,7 @@ import {TextArea} from '@astryxdesign/core/TextArea';
 import {TextInput} from '@astryxdesign/core/TextInput';
 
 import {getNodeDef} from '@/lib/catalog';
+import {isExecutableNode} from '@/lib/graph-execution';
 import type {ParamSpec, ParamValue, PegNode} from '@/lib/types';
 
 interface Props {
@@ -34,7 +35,7 @@ interface Props {
  */
 export function InspectorPanel({nodes, totalCost, isRunning, onRun, onParamChange, onDelete}: Props) {
   const single = nodes.length === 1 ? nodes[0] : null;
-  const runnable = nodes.filter(n => n.model);
+  const runnable = nodes.filter(isExecutableNode);
 
   return (
     <LayoutPanel width={292} hasDivider isScrollable padding={0} label="Node properties">

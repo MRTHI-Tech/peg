@@ -40,6 +40,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
 PREFIX = "peg"
 MAX_ATTEMPTS = 3
 PRESIGN_TTL = 60 * 60 * 12
+OUTPAINT_MODEL = "bria-genfill"
 
 # Mask feathering, in pixels, so the outpaint boundary is not a hard seam.
 FEATHER_SIGMA = 16
@@ -47,8 +48,16 @@ FEATHER_SIGMA = 16
 # Without this, genfill cheerfully paints copies of the subject into the space
 # that was supposed to stay empty for the headline.
 DEFAULT_NEGATIVE = (
-    "duplicate, repeated shapes, cloned object, extra product, extra podium, "
-    "text, logo, watermark, seam, hard edge, border"
+    "podium, pedestal, cylinder, platform, pillar, object, product, duplicate, "
+    "repeated shapes, cloned object, extra product, extra podium, text, logo, "
+    "watermark, seam, hard edge, border"
+)
+
+OUTPAINT_PROMPT = (
+    "Continue only the existing empty background into the generated area. Match the "
+    "source palette, lighting, materials, depth, and perspective exactly. Keep the "
+    "declared safe area calm and low-detail. Add no subjects, products, typography, "
+    "logos, podiums, platforms, or repeated objects."
 )
 
 
@@ -156,17 +165,40 @@ def _collect_run_output(run_id: str) -> tuple[AssetOut, ProvenanceOut]:
         except Exception:  # noqa: BLE001 — a malformed manifest should not fail the run
             pass
 
-        # Verification must come from Genblaze, not a guess at which fields are
-        # populated: presence of a `signature` key says nothing about validity,
-        # and reporting a valid manifest as unverified would undercut the whole
-        # provenance story.
-        try:
-            # parse_manifest wants the decoded dict, not the JSON text.
-            prov.verified = parse_manifest(json.loads(raw)).verify()
-        except Exception:  # noqa: BLE001
-            prov.verified = None
+        prov.verified = _verify_manifest(manifest_keys[0], raw)
 
     return asset, prov
+
+
+def _verify_manifest(key: str, raw: bytes) -> bool | None:
+    """Verify a manifest, tolerating B2's eventual consistency.
+
+    Verification must come from Genblaze rather than a guess at which fields are
+    populated — the presence of a `signature` key says nothing about validity.
+
+    But reading immediately after upload can return a not-yet-consistent copy,
+    which hashes to a mismatch and reports a perfectly good asset as tampered
+    with. That is the worst possible failure mode for a provenance feature, so a
+    False is re-checked against a fresh read before it is believed.
+
+    Returns True/False for a real verdict, or None when the check could not run.
+    None is not the same as False and must never be rendered as verified.
+    """
+    payload = raw
+    for attempt in range(3):
+        try:
+            if parse_manifest(json.loads(payload)).verify():
+                return True
+        except Exception:  # noqa: BLE001 — malformed read; try a fresh one
+            if attempt == 2:
+                return None
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+            try:
+                payload = fetch_object(key)
+            except Exception:  # noqa: BLE001
+                return None
+    return False
 
 
 def _submit(model: str, prompt: str, params: dict) -> tuple[str, int]:
@@ -213,31 +245,78 @@ def run_generate(req: RunRequest) -> RunOutcome:
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 
+def _content_rect(fmt: FormatSpec) -> tuple[int, int, int, int]:
+    """Return the two-thirds content zone opposite the protected safe band."""
+    w, h = fmt.width, fmt.height
+    if fmt.safe_area == "left-third":
+        safe = w // 3
+        return safe, 0, w - safe, h
+    if fmt.safe_area == "right-third":
+        safe = w // 3
+        return 0, 0, w - safe, h
+    if fmt.safe_area == "upper-third":
+        safe = h // 3
+        return 0, safe, w, h - safe
+    if fmt.safe_area == "lower-third":
+        safe = h // 3
+        return 0, 0, w, h - safe
+
+    # A centered safe region has no single rectangular complement. Treat it as
+    # prompt-only until Format exposes a richer two-dimensional focal point.
+    return 0, 0, w, h
+
+
+def _placement_for_format(
+    source_size: tuple[int, int], fmt: FormatSpec
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Contain the complete plate in the content zone and return (size, position)."""
+    source_w, source_h = source_size
+    if source_w <= 0 or source_h <= 0:
+        raise RunFailed("source image has invalid dimensions")
+
+    zone_x, zone_y, zone_w, zone_h = _content_rect(fmt)
+    scale = min(zone_w / source_w, zone_h / source_h)
+    plate_w = min(zone_w, max(1, round(source_w * scale)))
+    plate_h = min(zone_h, max(1, round(source_h * scale)))
+
+    if fmt.focal_point == "left":
+        x = zone_x
+    elif fmt.focal_point == "center":
+        x = zone_x + (zone_w - plate_w) // 2
+    else:
+        x = zone_x + zone_w - plate_w
+
+    if fmt.safe_area == "upper-third":
+        y = zone_y + zone_h - plate_h
+    elif fmt.safe_area == "lower-third":
+        y = zone_y
+    else:
+        y = zone_y + (zone_h - plate_h) // 2
+
+    return (plate_w, plate_h), (x, y)
+
+
 def _compose_for_format(source: Image.Image, fmt: FormatSpec) -> tuple[bytes, bytes]:
-    """Seat the plate at the focal point on a target canvas; mask the rest.
+    """Seat the whole plate outside the safe band; mask everything else.
 
     Returns (canvas_jpeg, mask_png). JPEG for the canvas because a PNG of a
     smooth gradient is ~3x the bytes and the endpoint is size-sensitive.
     """
     w, h = fmt.width, fmt.height
-    # Cover the short edge so the plate fills the canvas height.
-    scale = h / source.height
-    plate = source.resize((max(1, round(source.width * scale)), h), Image.LANCZOS)
-    plate_w = plate.width
+    plate_size, (x, y) = _placement_for_format(source.size, fmt)
+    plate = source.resize(plate_size, Image.LANCZOS)
 
-    if fmt.focal_point == "left":
-        x = 0
-    elif fmt.focal_point == "center":
-        x = (w - plate_w) // 2
-    else:
-        x = w - plate_w
-
-    canvas = Image.new("RGB", (w, h), (10, 4, 20))
-    canvas.paste(plate, (x, 0))
+    # A source-derived underlay does not push every customer's fill toward the
+    # fictional demo brand's violet, while still giving genfill a compatible base.
+    swatch = source.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+    canvas = Image.new("RGB", (w, h), swatch)
+    canvas.paste(plate, (x, y))
 
     # White = generate, black = keep. Feathered so the join is not a visible seam.
     mask = Image.new("L", (w, h), 255)
-    mask.paste(Image.new("L", (plate_w, h), 0), (x, 0))
+    mask.paste(Image.new("L", plate_size, 0), (x, y))
+    if mask.getextrema() == (0, 0):
+        raise RunFailed("target format leaves no area to outpaint")
     mask = mask.filter(ImageFilter.GaussianBlur(FEATHER_SIGMA))
 
     cbuf, mbuf = io.BytesIO(), io.BytesIO()
@@ -261,21 +340,30 @@ def run_outpaint(req: RunRequest) -> RunOutcome:
         canvas_bytes, mask_bytes = _compose_for_format(im.convert("RGB"), req.format)
 
     params = dict(req.params)
+    negative_prompt = DEFAULT_NEGATIVE
+    if req.negative_prompt:
+        negative_prompt = f"{DEFAULT_NEGATIVE}, {req.negative_prompt}"
     params.update(
         {
             # These exact names matter: image_url/mask_url are rejected.
             "image": base64.b64encode(canvas_bytes).decode(),
             "mask": base64.b64encode(mask_bytes).decode(),
-            "negative_prompt": req.negative_prompt or DEFAULT_NEGATIVE,
+            "negative_prompt": negative_prompt,
         }
     )
 
-    prompt = req.prompt or (
-        "Empty gradient backdrop matching the existing scene, smooth vignette falloff, "
-        "faint particle sparkle, completely bare with nothing in it"
-    )
-    run_id, attempts = _submit(req.model or "bria-genfill", prompt, params)
+    prompt = f"{OUTPAINT_PROMPT} Safe area: {req.format.safe_area}."
+    if req.prompt:
+        prompt = f"{prompt} Additional background-only direction: {req.prompt}"
+
+    # Bria Genfill is the only model proven to honour the image/mask recipe.
+    run_id, attempts = _submit(OUTPAINT_MODEL, prompt, params)
     asset, prov = _collect_run_output(run_id)
+    if (asset.width, asset.height) != (req.format.width, req.format.height):
+        raise RunFailed(
+            f"outpaint returned {asset.width}x{asset.height}; expected "
+            f"{req.format.width}x{req.format.height}"
+        )
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 

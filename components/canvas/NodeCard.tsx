@@ -8,6 +8,7 @@ import {HStack} from '@astryxdesign/core/Stack';
 import {Spinner} from '@astryxdesign/core/Spinner';
 
 import {PORT_SPACING, PORT_TOP_OFFSET, PORT_TYPE_COLOR} from '@/lib/canvas-geometry';
+import {isExecutableNode} from '@/lib/graph-execution';
 import type {Port, PegNode} from '@/lib/types';
 
 import {NODE_HEADER_HEIGHT} from './node-metrics';
@@ -102,7 +103,15 @@ export function NodeCard({
             src={node.result.url}
             alt={`${node.title} output`}
             draggable={false}
-            style={{inlineSize: '100%', aspectRatio: '1 / 1', objectFit: 'cover', display: 'block'}}
+            style={{
+              inlineSize: '100%',
+              aspectRatio:
+                node.result.width && node.result.height
+                  ? `${node.result.width} / ${node.result.height}`
+                  : '1 / 1',
+              objectFit: 'cover',
+              display: 'block',
+            }}
           />
         </div>
       ) : (
@@ -130,7 +139,7 @@ export function NodeCard({
       {/* Only model-backed nodes can run. Brand nodes (Style Kit, Format,
           Product Asset) carry constraints, so offering them a Run button
           promises something that would silently do nothing. */}
-      {!isTextNode && node.model && (
+      {!isTextNode && isExecutableNode(node) && (
         <HStack
           gap={1}
           align="center"

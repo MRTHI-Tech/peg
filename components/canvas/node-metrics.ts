@@ -11,8 +11,11 @@ export const NODE_FOOTER_HEIGHT = 32;
  */
 export function estimateNodeHeight(node: PegNode): number {
   if (node.result) {
-    // Square media preview plus chrome.
-    return NODE_HEADER_HEIGHT + node.width + NODE_FOOTER_HEIGHT;
+    const mediaHeight =
+      node.result.width && node.result.height
+        ? node.width * (node.result.height / node.result.width)
+        : node.width;
+    return NODE_HEADER_HEIGHT + mediaHeight + (node.model ? NODE_FOOTER_HEIGHT : 0);
   }
   if (node.text != null) {
     const lines = Math.ceil(node.text.length / 34);

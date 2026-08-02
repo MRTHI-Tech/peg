@@ -1,6 +1,6 @@
 'use client';
 
-import {ChevronDown, Share2} from 'lucide-react';
+import {ChevronDown, Play, Share2} from 'lucide-react';
 
 import {TopNav} from '@astryxdesign/core/TopNav';
 import {HStack} from '@astryxdesign/core/Stack';
@@ -17,9 +17,11 @@ interface Props {
   name: string;
   onNameChange: (name: string) => void;
   nodeCount: number;
+  isRunning: boolean;
+  onRunAll: () => void;
 }
 
-export function EditorTopBar({name, onNameChange, nodeCount}: Props) {
+export function EditorTopBar({name, onNameChange, nodeCount, isRunning, onRunAll}: Props) {
   return (
     <TopNav
       label="Project"
@@ -43,6 +45,14 @@ export function EditorTopBar({name, onNameChange, nodeCount}: Props) {
           <Text type="supporting" color="disabled">
             {nodeCount} nodes
           </Text>
+          <Button
+            label={isRunning ? 'Running workflow…' : 'Run all'}
+            variant="primary"
+            size="sm"
+            icon={<Icon icon={Play} size="xsm" />}
+            isLoading={isRunning}
+            onClick={onRunAll}
+          />
           <Button
             label="Tasks"
             variant="ghost"

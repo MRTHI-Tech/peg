@@ -11,21 +11,30 @@ import type {AssetRef, Edge, PegNode, Workflow} from './types';
 
 const BUCKET = 'peg-media';
 
-function asset(seed: string, palette: string, caption?: string): AssetRef {
+function asset(
+  seed: string,
+  palette: string,
+  {
+    caption,
+    width = 512,
+    height = 512,
+  }: {caption?: string; width?: number; height?: number} = {},
+): AssetRef {
   return {
     assetKey: `runs/demo/${seed}/output.png`,
     bucket: BUCKET,
     contentType: 'image/png',
     bytes: 1_482_000,
-    url: placeholderImage({seed, palette, caption}),
-    width: 512,
-    height: 512,
+    url: placeholderImage({seed, palette, caption, width, height}),
+    width,
+    height,
   };
 }
 
 interface NodeSeed {
   id: string;
   type: string;
+  title?: string;
   x: number;
   y: number;
   width?: number;
@@ -39,10 +48,14 @@ interface NodeSeed {
 function node(seed: NodeSeed): PegNode {
   const def = getNodeDef(seed.type);
   if (!def) throw new Error(`Unknown node type: ${seed.type}`);
+  const params = {...defaultParams(def), ...seed.params};
+  if (def.type === 'prompt' && seed.text != null && seed.params?.value == null) {
+    params.value = seed.text;
+  }
   return {
     id: seed.id,
     type: def.type,
-    title: def.title,
+    title: seed.title ?? def.title,
     category: def.category,
     provider: def.provider,
     model: def.model,
@@ -51,7 +64,7 @@ function node(seed: NodeSeed): PegNode {
     y: seed.y,
     width: seed.width ?? 240,
     status: seed.status ?? (seed.result ? 'complete' : 'idle'),
-    params: {...defaultParams(def), ...seed.params},
+    params,
     inputs: def.inputs,
     outputs: def.outputs,
     text: seed.text,
@@ -62,7 +75,7 @@ function node(seed: NodeSeed): PegNode {
           nodeId: seed.id,
           producedBy: {provider: def.provider ?? 'local', model: def.model ?? def.type},
           inputAssetKeys: [],
-          params: {...defaultParams(def), ...seed.params},
+          params,
           createdAt: '2026-07-28T14:12:00Z',
         }
       : undefined,
@@ -70,15 +83,15 @@ function node(seed: NodeSeed): PegNode {
 }
 
 /**
- * The reference workflow: one brief plus a locked brand kit becomes a
- * breakpoint-correct hero plate with the real product composited on top.
+ * The demo's core argument in one graph: generate the brand scene once, then
+ * compose a distinct desktop, mobile, and square plate from that same result.
  */
 const HERO_NODES: PegNode[] = [
   node({
     id: 'n-kit',
     type: 'style-kit',
     x: 40,
-    y: 120,
+    y: 100,
     width: 220,
     params: {
       name: 'Brand Kit',
@@ -88,126 +101,161 @@ const HERO_NODES: PegNode[] = [
     result: asset('brand-style-kit', 'dusk'),
   }),
   node({
-    id: 'n-format',
-    type: 'format',
-    x: 40,
-    y: 480,
-    width: 220,
-    params: {preset: 'Desktop hero', safeArea: 'Left third', focalPoint: 'Right'},
-  }),
-  node({
     id: 'n-brief',
     type: 'prompt',
     x: 40,
-    y: 680,
+    y: 500,
     width: 220,
-    text: 'Launch hero for the new account tier. Three cards floating above reflective podiums, camera slightly low, generous negative space on the left for the headline.',
-  }),
-  node({
-    id: 'n-enhancer',
-    type: 'prompt-enhancer',
-    x: 340,
-    y: 640,
-    width: 220,
-    params: {intent: 'Campaign hero'},
+    text:
+      'Launch hero for the new account tier. Three cards floating above reflective podiums, camera slightly low, with calm copy space around the focal product.',
   }),
   node({
     id: 'n-plate',
     type: 'brand-scene',
-    x: 640,
-    y: 160,
-    width: 280,
-    params: {resolution: '1920x600', numberOfImages: 1, randomSeed: false, seed: 285241},
-    result: asset('hero-plate', 'dusk'),
-  }),
-  node({
-    id: 'n-product',
-    type: 'product-asset',
-    x: 640,
-    y: 620,
-    width: 220,
-    params: {assetKey: 'brand/cards/tier-3-front.png'},
-    result: asset('product-cutout', 'mono'),
-  }),
-  node({
-    id: 'n-composite',
-    type: 'composite',
-    x: 1000,
-    y: 400,
+    title: 'Master Brand Scene',
+    x: 360,
+    y: 240,
     width: 260,
-    params: {scale: 100, opacity: 100, shadow: true},
-    result: asset('hero-composite', 'bloom'),
+    params: {resolution: '1024x1024', numberOfImages: 1, randomSeed: false, seed: 285241},
+    result: asset('master-brand-scene', 'dusk', {
+      caption: 'Master',
+      width: 1024,
+      height: 1024,
+    }),
   }),
   node({
-    id: 'n-preview',
-    type: 'preview',
-    x: 1340,
-    y: 160,
-    width: 240,
-    params: {showOverlay: true},
-    result: asset('hero-preview', 'bloom'),
-  }),
-  node({
-    id: 'n-export',
-    type: 'export',
-    x: 1340,
-    y: 560,
+    id: 'n-format-desktop',
+    type: 'format',
+    title: 'Desktop Format',
+    x: 720,
+    y: 40,
     width: 220,
-    params: {format: 'png'},
-    result: asset('hero-final', 'ice'),
+    params: {preset: 'Desktop hero', safeArea: 'Left third', focalPoint: 'Right'},
+  }),
+  node({
+    id: 'n-compose-desktop',
+    type: 'genfill',
+    title: 'Compose Desktop',
+    x: 1040,
+    y: 40,
+    width: 300,
+    params: {strength: 0.65, numberOfImages: 1, randomSeed: false, seed: 285241},
+    result: asset('desktop-composition', 'dusk', {
+      caption: 'Desktop',
+      width: 1920,
+      height: 600,
+    }),
+  }),
+  node({
+    id: 'n-format-mobile',
+    type: 'format',
+    title: 'Mobile Format',
+    x: 720,
+    y: 400,
+    width: 220,
+    params: {preset: 'Mobile hero', safeArea: 'Upper third', focalPoint: 'Center'},
+  }),
+  node({
+    id: 'n-compose-mobile',
+    type: 'genfill',
+    title: 'Compose Mobile',
+    x: 1040,
+    y: 360,
+    width: 240,
+    params: {strength: 0.65, numberOfImages: 1, randomSeed: false, seed: 285241},
+    result: asset('mobile-composition', 'dusk', {
+      caption: 'Mobile',
+      width: 828,
+      height: 1104,
+    }),
+  }),
+  node({
+    id: 'n-format-square',
+    type: 'format',
+    title: 'Square Format',
+    x: 720,
+    y: 840,
+    width: 220,
+    params: {preset: 'Square social', safeArea: 'Upper third', focalPoint: 'Center'},
+  }),
+  node({
+    id: 'n-compose-square',
+    type: 'genfill',
+    title: 'Compose Square',
+    x: 1040,
+    y: 820,
+    width: 260,
+    params: {strength: 0.65, numberOfImages: 1, randomSeed: false, seed: 285241},
+    result: asset('square-composition', 'dusk', {
+      caption: 'Square',
+      width: 1080,
+      height: 1080,
+    }),
   }),
 ];
 
 /** Type-valid against the catalog: style/format/text/image ports only meet their own kind. */
 const HERO_EDGES: Edge[] = [
-  {id: 'e1', fromNode: 'n-kit', fromPort: 'style', toNode: 'n-enhancer', toPort: 'style', type: 'style'},
-  {id: 'e2', fromNode: 'n-brief', fromPort: 'text', toNode: 'n-enhancer', toPort: 'prompt', type: 'text'},
-  {id: 'e3', fromNode: 'n-kit', fromPort: 'style', toNode: 'n-plate', toPort: 'style', type: 'style'},
-  {id: 'e4', fromNode: 'n-enhancer', fromPort: 'text', toNode: 'n-plate', toPort: 'prompt', type: 'text'},
-  {id: 'e5', fromNode: 'n-format', fromPort: 'format', toNode: 'n-plate', toPort: 'format', type: 'format'},
-  {id: 'e6', fromNode: 'n-plate', fromPort: 'result', toNode: 'n-composite', toPort: 'base', type: 'image'},
+  {id: 'e1', fromNode: 'n-kit', fromPort: 'style', toNode: 'n-plate', toPort: 'style', type: 'style'},
+  {id: 'e2', fromNode: 'n-brief', fromPort: 'text', toNode: 'n-plate', toPort: 'prompt', type: 'text'},
   {
-    id: 'e7',
-    fromNode: 'n-product',
+    id: 'e3',
+    fromNode: 'n-plate',
     fromPort: 'result',
-    toNode: 'n-composite',
-    toPort: 'overlay',
+    toNode: 'n-compose-desktop',
+    toPort: 'image',
     type: 'image',
   },
   {
-    id: 'e8',
-    fromNode: 'n-format',
+    id: 'e4',
+    fromNode: 'n-format-desktop',
     fromPort: 'format',
-    toNode: 'n-composite',
+    toNode: 'n-compose-desktop',
     toPort: 'format',
     type: 'format',
   },
   {
-    id: 'e9',
-    fromNode: 'n-composite',
+    id: 'e5',
+    fromNode: 'n-plate',
     fromPort: 'result',
-    toNode: 'n-preview',
-    toPort: 'asset',
+    toNode: 'n-compose-mobile',
+    toPort: 'image',
     type: 'image',
   },
   {
-    id: 'e10',
-    fromNode: 'n-composite',
+    id: 'e6',
+    fromNode: 'n-format-mobile',
+    fromPort: 'format',
+    toNode: 'n-compose-mobile',
+    toPort: 'format',
+    type: 'format',
+  },
+  {
+    id: 'e7',
+    fromNode: 'n-plate',
     fromPort: 'result',
-    toNode: 'n-export',
-    toPort: 'asset',
+    toNode: 'n-compose-square',
+    toPort: 'image',
     type: 'image',
+  },
+  {
+    id: 'e8',
+    fromNode: 'n-format-square',
+    fromPort: 'format',
+    toNode: 'n-compose-square',
+    toPort: 'format',
+    type: 'format',
   },
 ];
 
 export const HERO_WORKFLOW: Workflow = {
   id: 'desktop-hero',
-  name: 'Launch Hero — Desktop',
+  name: 'Launch Hero — Breakpoint Fan-out',
   nodes: HERO_NODES,
   edges: HERO_EDGES,
   updatedAt: '2026-07-28T14:12:00Z',
   nodeCount: HERO_NODES.length,
-  thumbnailUrl: placeholderImage({seed: 'hero-composite', palette: 'bloom', width: 480, height: 300}),
+  thumbnailUrl: placeholderImage({seed: 'desktop-composition', palette: 'dusk', width: 480, height: 300}),
 };
 
 /** Gallery entries. Only HERO_WORKFLOW has a full graph; the rest are cards. */
