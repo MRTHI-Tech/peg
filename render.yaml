@@ -54,13 +54,15 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "24"
-      # `property: hostport` produced an address peg-web could not reach on the
-      # free tier, so this points at the service's own public hostname.
+      # Set explicitly rather than via `fromService`. Both properties were tried
+      # and neither yields a reachable address on the free tier: `hostport` gave
+      # something peg-web could not resolve, and `host` returns the bare internal
+      # name `peg-service` with no domain. The public hostname is verified
+      # working, and because requests arrive over the internet they also wake the
+      # service from free-tier idle, which an internal call would not do.
+      # If peg-service is ever renamed, this must be updated with it.
       - key: PEG_SERVICE_URL
-        fromService:
-          name: peg-service
-          type: web
-          property: host
+        value: https://peg-service.onrender.com
       # Mirrors the value generated on peg-service so both sides share a secret.
       - key: PEG_SERVICE_TOKEN
         fromService:
