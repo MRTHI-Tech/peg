@@ -24,17 +24,20 @@ PEG generates a *different composition* per breakpoint from the same brand lock.
 
 ## The second rule that shapes the architecture
 
-**Diffusion cannot render your product. Do not try.**
+Earlier drafts of this file said "diffusion cannot render your product, do not try." **That was wrong and has been tested.** `gemini-3.1-flash-lite-image` (nano-banana 2 Lite, via GMI) renders exact wordmarks crisply and correctly spelled, including in reflections. See `service/nano_banana_test.py`.
 
-A generated credit card has a mangled logo, a wrong VISA mark, garbled numbers. This is not fixable with prompting. So every asset splits into three layers:
+The accurate rule is narrower:
 
-| Layer | Source |
-|---|---|
-| Environment — gradient, podiums, lighting, particles, depth | **Generated** via Genblaze |
-| Product — cards, devices, logos | **Real** transparent PNGs from the B2 brand library |
-| Copy — headlines, legal, CTAs | **Live** text in the host page |
+**Do not expect a model to conjure a brand asset it has never seen.** Asking for "the Discovery Bank logo" gets an approximation. But *specifying* text, or *supplying* the asset, now works well.
 
-This is why `Product Asset` exists as a node and why `Place Product` runs locally rather than through a model.
+So there are two valid paths, chosen per element:
+
+| Path | When | How |
+|---|---|---|
+| **Composite** the real cutout | The hero product, anything with legal/brand sign-off, exact marks (VISA, card numbers) | `Product Asset` → `Place Product`, locally |
+| **Generate** it | Secondary presence — product in a reflection, at an angle, distant, relit to match the plate | Gemini image model with the text specified |
+
+Compositing remains the default for the hero product for **compliance** reasons, not technical ones: "very close" is a brand failure when a team signs off pixel-exact assets. But generation is no longer off the table, and it does things a flat PNG composite cannot — angles, reflections, matched relighting.
 
 ## Who it is for
 
@@ -122,7 +125,17 @@ Everything below was checked against the **installed SDK** (`genblaze 0.4.5`, `g
 
 ### Confirmed working end-to-end
 
-`seedream-5.0-lite` (text-to-image) → B2 → signed manifest. Run `service/smoke_test.py` to reproduce.
+| Model | Role | Output size | Notes |
+|---|---|---|---|
+| `seedream-5.0-lite` | text-to-image plate | 2048×2048 | `service/smoke_test.py` |
+| `bria-genfill` | outpaint to breakpoint | matches input canvas | `service/outpaint_test.py`; flaky, retry |
+| `gemini-3.1-flash-lite-image` | text-to-image with **accurate text** | 1024×1024 | `service/nano_banana_test.py`; worked first try |
+
+**`gemini-3.1-flash-lite-image` is nano-banana 2 Lite.** GMI Cloud is a day-zero launch partner for it, and it is reachable through `GMICloudImageProvider` despite being unregistered. It rendered an exact wordmark plus secondary line, correctly spelled and cleanly kerned, including a properly mirrored reflection — and it succeeded on the first attempt with no retries, notably more reliable than genfill.
+
+Untried siblings, likely also reachable: `gemini-3.1-flash-image`, `gemini-3-pro-image`, `gemini-2.5-flash-image`.
+
+Note each model returns its own fixed size (2048² vs 1024²) and none honour dimension params — the outpaint recipe is still how we hit a breakpoint.
 
 ### How the model registry actually behaves
 
