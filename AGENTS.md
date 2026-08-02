@@ -76,12 +76,30 @@ run takes minutes — past any serverless timeout.
 | `peg-service` | Python 3.11 | FastAPI + genblaze. No public URL; reached over Render's private network |
 | `peg-web` | Node 24 | Next.js. `PEG_SERVICE_URL` is injected via `fromService` |
 
-`fromService` yields a bare `host:port` with no scheme, which is why
-`lib/service-config.ts` normalizes both shapes.
+**Do not try to wire the two services with `fromService`.** Both properties were
+tested against the live deploy and neither yields a reachable address on the
+free tier: `hostport` produced something the app could not resolve, and `host`
+returns the bare internal name `peg-service` with no domain. `PEG_SERVICE_URL`
+is therefore set explicitly to the public hostname — update it if the service is
+renamed.
+
+**peg-service is on the public internet**, because Render's Private Services are
+a paid feature. `POST /runs` and `GET /runs/{id}` require `X-PEG-Token`, matched
+against `PEG_SERVICE_TOKEN` — generated once by Render and mirrored onto
+`peg-web`. `/health` stays open for platform probes. Verified: an
+unauthenticated submit returns 401. An unset token means open, which keeps local
+development frictionless.
+
+Blueprints **do** apply env var changes automatically on push; no manual sync is
+needed.
+
+`GET /api/health` on the app reports the resolved service address and whether
+the upstream answers. Use it first when a deploy misbehaves — otherwise a
+misconfigured URL and a dead service both look like "fetch failed".
 
 Secrets are `sync: false` — entered once in the Render dashboard, never
-committed. The free tier spins services down when idle, so the first request
-after a quiet period is slow; warm it before demoing.
+committed. The free tier idles both services down after ~15 minutes and a cold
+start is 50s+ *per service*; warm the URL before demoing.
 
 ## Layout of the code
 
