@@ -172,18 +172,37 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
    */
   const resolveInputs = useCallback(
     (node: PegNode) => {
-      const incoming = edges.filter(e => e.toNode === node.id);
-      const sourceOf = (portId: string) => {
-        const edge = incoming.find(e => e.toPort === portId);
+      const sourceOf = (target: PegNode, portId: string) => {
+        const edge = edges.find(e => e.toNode === target.id && e.toPort === portId);
         return edge ? nodes.find(n => n.id === edge.fromNode) : undefined;
       };
 
-      const promptNode = sourceOf('prompt');
-      const formatNode = sourceOf('format');
-      const imageNode = sourceOf('image') ?? sourceOf('base') ?? sourceOf('asset');
+      /**
+       * Walk upstream for prompt text.
+       *
+       * The chain is usually Brief → Art Direct → Brand Scene, and Art Direct is
+       * itself a model node. Looking only one hop finds an unrun Art Direct with
+       * no text and submits an empty prompt, which the API rejects. So keep
+       * walking until actual text turns up.
+       */
+      const resolvePrompt = (start: PegNode, seen = new Set<string>()): string => {
+        if (seen.has(start.id)) return ''; // cycles are possible; the graph is user-built
+        seen.add(start.id);
 
+        const own = (start.text ?? String(start.params.value ?? '')).trim();
+        if (own) return own;
+
+        const upstream = sourceOf(start, 'prompt');
+        return upstream ? resolvePrompt(upstream, seen) : '';
+      };
+
+      const formatNode = sourceOf(node, 'format');
+      const imageNode =
+        sourceOf(node, 'image') ?? sourceOf(node, 'base') ?? sourceOf(node, 'asset');
+
+      const upstreamPrompt = sourceOf(node, 'prompt');
       return {
-        prompt: promptNode?.text?.trim() || String(node.params.value ?? '').trim(),
+        prompt: upstreamPrompt ? resolvePrompt(upstreamPrompt) : resolvePrompt(node),
         format: formatNode ? toRunFormat(formatNode.params) : undefined,
         sourceAssetKey: imageNode?.result?.assetKey,
       };
@@ -202,6 +221,15 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
 
       // Outpaint when there is an upstream plate and a target to hit.
       const isOutpaint = Boolean(sourceAssetKey && format);
+
+      // Fail here rather than spending a call the API will reject anyway.
+      if (!prompt && !isOutpaint) {
+        patchNode(node.id, {
+          status: 'error',
+          error: 'No prompt. Connect a Brief node, or type one into this node.',
+        });
+        return;
+      }
 
       patchNode(node.id, {status: 'queued', error: undefined});
 

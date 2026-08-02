@@ -1,10 +1,16 @@
 /**
  * Where the Python Genblaze service lives.
  *
- * Server-side only — this is imported by route handlers, never by a component.
- * On Render both services run in the same project, so this becomes the internal
- * service URL rather than a public one.
+ * Server-side only — imported by route handlers, never by a component.
+ *
+ * Render's `fromService` injects a bare `host:port` with no scheme, while local
+ * development sets a full URL, so both shapes are accepted rather than letting
+ * a schemeless value fail at fetch time.
  */
-export const SERVICE_URL = (
-  process.env.PEG_SERVICE_URL ?? 'http://127.0.0.1:8010'
-).replace(/\/$/, '');
+function normalize(raw: string): string {
+  const trimmed = raw.trim().replace(/\/$/, '');
+  if (!trimmed) return 'http://127.0.0.1:8010';
+  return /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
+export const SERVICE_URL = normalize(process.env.PEG_SERVICE_URL ?? 'http://127.0.0.1:8010');

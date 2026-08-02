@@ -1,0 +1,55 @@
+# Render blueprint for PEG.
+#
+# Two services, because genblaze is Python-only and a single generation runs for
+# minutes — far past any serverless timeout. The Next.js app talks to the Python
+# service over Render's private network, so the generation service is never
+# exposed publicly and no credential reaches the browser.
+#
+# Secrets are marked `sync: false`: Render prompts for them once in the
+# dashboard and never stores them in this file.
+
+services:
+  # ------------------------------------------------------- generation service
+  - type: web
+    name: peg-service
+    runtime: python
+    plan: free
+    rootDir: service
+    # Only reachable from peg-web over the private network.
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.15"
+      - key: GMI_API_KEY
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APP_KEY
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_REGION
+        sync: false
+      # GMI drops submits under load, so keep concurrency modest.
+      - key: PEG_MAX_CONCURRENT_RUNS
+        value: "2"
+
+  # ---------------------------------------------------------------- the app
+  - type: web
+    name: peg-web
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      # Resolved by Render to the service's internal address — the generation
+      # service has no public URL.
+      - key: PEG_SERVICE_URL
+        fromService:
+          name: peg-service
+          type: web
+          property: hostport

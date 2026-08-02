@@ -66,6 +66,23 @@ Corporate marketing and brand teams who currently commission agencies for key vi
 
 Genblaze is Python and will not run in Node. It needs a separate service (FastAPI) that Next.js route handlers proxy to.
 
+## Deployment
+
+Two services on Render (`render.yaml`), because genblaze is Python-only and a
+run takes minutes — past any serverless timeout.
+
+| Service | Runtime | Notes |
+|---|---|---|
+| `peg-service` | Python 3.11 | FastAPI + genblaze. No public URL; reached over Render's private network |
+| `peg-web` | Node 24 | Next.js. `PEG_SERVICE_URL` is injected via `fromService` |
+
+`fromService` yields a bare `host:port` with no scheme, which is why
+`lib/service-config.ts` normalizes both shapes.
+
+Secrets are `sync: false` — entered once in the Render dashboard, never
+committed. The free tier spins services down when idle, so the first request
+after a quiet period is slow; warm it before demoing.
+
 ## Layout of the code
 
 ```
