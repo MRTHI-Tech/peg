@@ -80,6 +80,37 @@ class ProvenanceOut(BaseModel):
     created_at: str | None = None
 
 
+class BrandAssetIn(BaseModel):
+    """One uploaded brand file, base64-encoded.
+
+    `is_logo` routes it: logos are composited on top of a plate and must never
+    condition generation, because a logo used as a style reference produces
+    garbled logo-like shapes.
+    """
+
+    filename: str = Field(max_length=200)
+    content_type: str = Field(default="image/png", max_length=100)
+    data_b64: str
+    is_logo: bool = False
+
+
+class TypographyIn(BaseModel):
+    """Captured for the live-text layer. Never sent to a model."""
+
+    heading: str = ""
+    body: str = ""
+    notes: str = ""
+
+
+class BrandIn(BaseModel):
+    name: str = ""
+    description: str = ""
+    palette: list[str] = Field(default_factory=list)
+    style_references: list[dict] = Field(default_factory=list)
+    logos: list[dict] = Field(default_factory=list)
+    typography: TypographyIn = Field(default_factory=TypographyIn)
+
+
 class RunResponse(BaseModel):
     run_id: str
     node_id: str | None = None

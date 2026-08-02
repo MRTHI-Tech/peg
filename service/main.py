@@ -15,15 +15,18 @@ no credential ever leaves the server.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import uuid
+from dataclasses import asdict
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+import brand
 import runner
-from schemas import RunRequest, RunResponse, RunStatus
+from schemas import BrandAssetIn, BrandIn, RunRequest, RunResponse, RunStatus
 
 # In-memory job store. Fine for a single instance; if this ever runs replicated,
 # move it to Redis or the B2 manifest index.
@@ -52,7 +55,7 @@ app = FastAPI(title="PEG generation service", version="0.1.0", lifespan=lifespan
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o for o in os.environ.get("PEG_ALLOWED_ORIGINS", "*").split(",") if o],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
 )
 
@@ -102,6 +105,69 @@ async def health() -> dict:
     async with _LOCK:
         active = sum(1 for j in _JOBS.values() if j.status == RunStatus.running)
     return {"status": "ok", "bucket": os.environ.get("B2_BUCKET"), "active_runs": active}
+
+
+@app.get("/brand")
+async def get_brand(_: None = Depends(require_token)) -> dict:
+    """The workspace brand. A first-run workspace returns an empty one, not 404."""
+    b = await asyncio.to_thread(brand.load_brand)
+    return {**asdict(b), "is_complete": b.is_complete()}
+
+
+@app.put("/brand")
+async def put_brand(payload: BrandIn, _: None = Depends(require_token)) -> dict:
+    def _save() -> None:
+        current = brand.load_brand()
+        current.name = payload.name
+        current.description = payload.description
+        current.palette = payload.palette
+        current.typography = brand.Typography(**payload.typography.model_dump())
+        # Assets are added via /brand/assets; this accepts the surviving set so
+        # removals persist, but never trusts the client's presigned URLs.
+        current.style_references = [
+            brand.BrandAsset(**{**a, "url": ""}) for a in payload.style_references
+        ]
+        current.logos = [brand.BrandAsset(**{**a, "url": ""}) for a in payload.logos]
+        brand.save_brand(current)
+
+    await asyncio.to_thread(_save)
+    fresh = await asyncio.to_thread(brand.load_brand)
+    return {**asdict(fresh), "is_complete": fresh.is_complete()}
+
+
+@app.post("/brand/assets", status_code=201)
+async def add_brand_asset(payload: BrandAssetIn, _: None = Depends(require_token)) -> dict:
+    """Store one asset and, for style references, extract its palette.
+
+    Palette extraction is deterministic and model-free, so it happens inline
+    rather than as another job to poll.
+    """
+
+    def _add() -> dict:
+        asset = brand.upload_asset(
+            payload.data_b64,
+            payload.filename,
+            payload.content_type,
+            is_logo=payload.is_logo,
+        )
+        current = brand.load_brand()
+        if payload.is_logo:
+            current.logos.append(asset)
+            palette: list[str] = []
+        else:
+            current.style_references.append(asset)
+            palette = brand.extract_palette(base64.b64decode(payload.data_b64))
+            # Merge rather than replace: a second reference adds to the palette.
+            for value in palette:
+                if value not in current.palette:
+                    current.palette.append(value)
+        brand.save_brand(current)
+        return {"asset": asdict(asset), "extracted_palette": palette}
+
+    try:
+        return await asyncio.to_thread(_add)
+    except brand.BrandError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/runs", response_model=RunResponse, status_code=202)
