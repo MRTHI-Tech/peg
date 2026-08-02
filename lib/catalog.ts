@@ -200,6 +200,22 @@ export const CATALOG: NodeDef[] = [
     description: 'Text-to-image base. Use when there is no reference to match yet.',
   },
   {
+    // Verified end to end and the most reliable model we have: it succeeded
+    // first try where the Bria endpoints drop ~2 in 3 submits. Also the only
+    // one that renders exact wordmarks legibly.
+    type: 'brand-scene',
+    title: 'Brand Scene',
+    category: 'image-models',
+    provider: 'gmicloud-image',
+    model: 'gemini-3.1-flash-lite-image',
+    cost: 0.03,
+    inputs: [promptIn(), styleIn(false), {id: 'format', name: 'Format', type: 'format', isRequired: false}],
+    outputs: [imageOut()],
+    params: [RESOLUTION, ...GEN_TAIL],
+    description:
+      'The workhorse. Holds the brand look and is the only model here that renders exact text and marks.',
+  },
+  {
     type: 'flux-kontext',
     title: 'Match Brand Look',
     category: 'image-models',

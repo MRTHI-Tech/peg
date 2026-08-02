@@ -42,6 +42,7 @@ interface Props {
   onNodeMove: (id: string, x: number, y: number) => void;
   onConnect: (edge: Omit<Edge, 'id'>) => void;
   onEdgeDelete: (id: string) => void;
+  onRunNode: (node: PegNode) => void;
 }
 
 export function NodeCanvas({
@@ -54,6 +55,7 @@ export function NodeCanvas({
   onNodeMove,
   onConnect,
   onEdgeDelete,
+  onRunNode,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{startX: number; startY: number; origin: Viewport} | null>(null);
@@ -293,6 +295,7 @@ export function NodeCanvas({
             onHeaderPointerDown={e => startNodeDrag(e, node)}
             onOutputPointerDown={(e, portId, type) => startConnection(e, node, portId, type)}
             onInputPointerUp={portId => completeConnection(node, portId)}
+            onRun={() => onRunNode(node)}
           />
         ))}
       </div>

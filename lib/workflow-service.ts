@@ -150,5 +150,7 @@ export function toProvenance(result: RunResult, nodeId: string): Provenance | un
     inputAssetKeys: [],
     params: {},
     createdAt: p.created_at ?? new Date().toISOString(),
+    manifestKey: p.manifest_key ?? undefined,
+    verified: p.verified ?? undefined,
   };
 }

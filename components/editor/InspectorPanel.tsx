@@ -1,6 +1,6 @@
 'use client';
 
-import {Play, Sparkles, Trash2} from 'lucide-react';
+import {Play, ShieldAlert, ShieldCheck, Sparkles, Trash2} from 'lucide-react';
 
 import {LayoutPanel} from '@astryxdesign/core/Layout';
 import {HStack, VStack} from '@astryxdesign/core/Stack';
@@ -22,6 +22,8 @@ import type {ParamSpec, ParamValue, PegNode} from '@/lib/types';
 interface Props {
   nodes: PegNode[];
   totalCost: number;
+  isRunning: boolean;
+  onRun: () => void;
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
   onDelete: () => void;
 }
@@ -30,8 +32,9 @@ interface Props {
  * Right-hand inspector. Shows the parameters of a single selection, or a
  * summary plus run controls when several nodes are selected.
  */
-export function InspectorPanel({nodes, totalCost, onParamChange, onDelete}: Props) {
+export function InspectorPanel({nodes, totalCost, isRunning, onRun, onParamChange, onDelete}: Props) {
   const single = nodes.length === 1 ? nodes[0] : null;
+  const runnable = nodes.filter(n => n.model);
 
   return (
     <LayoutPanel width={292} hasDivider isScrollable padding={0} label="Node properties">
@@ -85,13 +88,17 @@ export function InspectorPanel({nodes, totalCost, onParamChange, onDelete}: Prop
                 </HStack>
               </HStack>
               <Button
-                label="Run selected"
+                label={isRunning ? 'Running…' : `Run ${runnable.length || ''}`.trim()}
                 variant="primary"
                 size="sm"
                 width="100%"
                 icon={<Icon icon={Play} size="xsm" />}
-                isDisabled
-                tooltip="Generation is not wired up yet"
+                isLoading={isRunning}
+                isDisabled={runnable.length === 0}
+                tooltip={
+                  runnable.length === 0 ? 'Select a model node to run' : undefined
+                }
+                onClick={onRun}
               />
               <Button
                 label="Delete"
@@ -160,18 +167,67 @@ function SingleNodeFields({
         )}
       </VStack>
 
+      {node.status === 'error' && node.error && (
+        <>
+          <Divider />
+          <VStack gap={1}>
+            <Text type="supporting" color="secondary">
+              Last run failed
+            </Text>
+            <Text type="supporting" maxLines={6} style={{color: 'var(--color-error)'}}>
+              {node.error}
+            </Text>
+          </VStack>
+        </>
+      )}
+
       {node.result && (
         <>
           <Divider />
-          {/* Storage identity for the produced asset. Becomes a real B2 object
-              key and provenance record once generation is wired up. */}
-          <VStack gap={1}>
-            <Text type="supporting" color="secondary">
-              Output
-            </Text>
-            <Text type="supporting" color="disabled" maxLines={2}>
-              {node.result.bucket}/{node.result.assetKey}
-            </Text>
+          {/* Provenance is the point of the whole storage story, so it is shown
+              rather than buried: where the asset lives and whether its signed
+              manifest verifies. */}
+          <VStack gap={1.5}>
+            <HStack justify="between" align="center">
+              <Text type="supporting" color="secondary">
+                Output
+              </Text>
+              {node.result.width && node.result.height && (
+                <Text type="supporting" color="disabled">
+                  {node.result.width}×{node.result.height}
+                </Text>
+              )}
+            </HStack>
+
+            <VStack gap={0.5}>
+              <Text type="supporting" color="disabled" maxLines={3}>
+                {node.result.bucket}/{node.result.assetKey}
+              </Text>
+              {node.provenance && (
+                <>
+                  <Text type="supporting" color="disabled" maxLines={1}>
+                    run {node.provenance.runId}
+                  </Text>
+                  {/* Reports exactly what Genblaze's verify() returned. `undefined`
+                      means the check could not run, which is not the same as
+                      verified and must never be shown as such. */}
+                  <HStack gap={1} align="center">
+                    <Icon
+                      icon={node.provenance.verified ? ShieldCheck : ShieldAlert}
+                      size="xsm"
+                      color={node.provenance.verified ? 'success' : 'warning'}
+                    />
+                    <Text type="supporting" color="secondary">
+                      {node.provenance.verified
+                        ? 'Manifest verified'
+                        : node.provenance.verified === false
+                          ? 'Manifest failed verification'
+                          : 'Manifest not verified'}
+                    </Text>
+                  </HStack>
+                </>
+              )}
+            </VStack>
           </VStack>
         </>
       )}

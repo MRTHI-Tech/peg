@@ -10,7 +10,9 @@ import {NodeCanvas} from '@/components/canvas/NodeCanvas';
 import {estimateNodeHeight} from '@/components/canvas/node-metrics';
 import {defaultParams, getNodeDef} from '@/lib/catalog';
 import {fitViewport, graphBounds, type Viewport} from '@/lib/canvas-geometry';
+import {toRunFormat} from '@/lib/formats';
 import {useMediaQuery} from '@/lib/use-media-query';
+import {executeRun, toAssetRef, toProvenance} from '@/lib/workflow-service';
 import type {Edge, NodeCategory, ParamValue, PegNode, Workflow} from '@/lib/types';
 
 import {EditorTopBar} from './EditorTopBar';
@@ -159,6 +161,91 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
     setSelectedIds([]);
   }, [selectedIds]);
 
+  // --------------------------------------------------------------- running
+  /**
+   * Resolve a node's inputs from the graph.
+   *
+   * The prompt comes from whatever text node feeds its prompt port; the target
+   * geometry from whatever Format node feeds its format port. A node with an
+   * upstream image input becomes an outpaint rather than a fresh generation,
+   * which is how a plate gets recomposed to a breakpoint.
+   */
+  const resolveInputs = useCallback(
+    (node: PegNode) => {
+      const incoming = edges.filter(e => e.toNode === node.id);
+      const sourceOf = (portId: string) => {
+        const edge = incoming.find(e => e.toPort === portId);
+        return edge ? nodes.find(n => n.id === edge.fromNode) : undefined;
+      };
+
+      const promptNode = sourceOf('prompt');
+      const formatNode = sourceOf('format');
+      const imageNode = sourceOf('image') ?? sourceOf('base') ?? sourceOf('asset');
+
+      return {
+        prompt: promptNode?.text?.trim() || String(node.params.value ?? '').trim(),
+        format: formatNode ? toRunFormat(formatNode.params) : undefined,
+        sourceAssetKey: imageNode?.result?.assetKey,
+      };
+    },
+    [edges, nodes],
+  );
+
+  const patchNode = useCallback((id: string, patch: Partial<PegNode>) => {
+    setNodes(prev => prev.map(n => (n.id === id ? {...n, ...patch} : n)));
+  }, []);
+
+  const runNode = useCallback(
+    async (node: PegNode) => {
+      if (!node.model) return;
+      const {prompt, format, sourceAssetKey} = resolveInputs(node);
+
+      // Outpaint when there is an upstream plate and a target to hit.
+      const isOutpaint = Boolean(sourceAssetKey && format);
+
+      patchNode(node.id, {status: 'queued', error: undefined});
+
+      try {
+        const result = await executeRun(
+          {
+            operation: isOutpaint ? 'outpaint' : 'generate',
+            node_id: node.id,
+            model: node.model,
+            prompt,
+            negative_prompt: String(node.params.negativePrompt ?? '') || undefined,
+            params: {seed: Number(node.params.seed ?? 0)},
+            source_asset_key: isOutpaint ? sourceAssetKey : undefined,
+            format: isOutpaint ? format : undefined,
+          },
+          {
+            onProgress: r =>
+              patchNode(node.id, {status: r.status === 'queued' ? 'queued' : 'running'}),
+          },
+        );
+
+        patchNode(node.id, {
+          status: 'complete',
+          result: toAssetRef(result),
+          provenance: toProvenance(result, node.id),
+          error: undefined,
+        });
+      } catch (error) {
+        patchNode(node.id, {status: 'error', error: (error as Error).message});
+      }
+    },
+    [patchNode, resolveInputs],
+  );
+
+  const runSelected = useCallback(() => {
+    // Sequential: GMI is flaky under load and the service caps concurrency anyway.
+    void selectedNodes.filter(n => n.model).reduce(
+      (chain, node) => chain.then(() => runNode(node)),
+      Promise.resolve(),
+    );
+  }, [runNode, selectedNodes]);
+
+  const isRunning = nodes.some(n => n.status === 'queued' || n.status === 'running');
+
   // ------------------------------------------------------------- shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -213,6 +300,8 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
             <InspectorPanel
               nodes={selectedNodes}
               totalCost={totalCost}
+              isRunning={isRunning}
+              onRun={runSelected}
               onParamChange={updateParam}
               onDelete={deleteSelection}
             />
@@ -229,6 +318,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
             onNodeMove={moveNode}
             onConnect={connect}
             onEdgeDelete={deleteEdge}
+            onRunNode={runNode}
           />
           <ZoomToolbar
             viewport={viewport}

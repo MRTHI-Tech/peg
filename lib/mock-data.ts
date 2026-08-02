@@ -113,7 +113,7 @@ const HERO_NODES: PegNode[] = [
   }),
   node({
     id: 'n-plate',
-    type: 'flux-kontext',
+    type: 'brand-scene',
     x: 640,
     y: 160,
     width: 280,

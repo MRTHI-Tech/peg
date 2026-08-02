@@ -116,6 +116,13 @@ export interface Provenance {
   inputAssetKeys: string[];
   params: Record<string, ParamValue>;
   createdAt: string;
+  /** B2 key of the signed manifest. */
+  manifestKey?: string;
+  /**
+   * Result of Genblaze's own `manifest.verify()`. `undefined` means the check
+   * could not be performed — never render that as verified.
+   */
+  verified?: boolean;
 }
 
 export type ParamValue = string | number | boolean;
@@ -140,6 +147,8 @@ export interface PegNode {
   text?: string;
   result?: AssetRef;
   provenance?: Provenance;
+  /** Failure reason from the last run, surfaced on the node and the inspector. */
+  error?: string;
 }
 
 export interface Edge {

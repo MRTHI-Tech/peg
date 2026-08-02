@@ -21,6 +21,7 @@ interface Props {
   onHeaderPointerDown: (e: React.PointerEvent) => void;
   onOutputPointerDown: (e: React.PointerEvent, portId: string, type: string) => void;
   onInputPointerUp: (portId: string) => void;
+  onRun: () => void;
 }
 
 const STATUS_RING: Record<PegNode['status'], string | undefined> = {
@@ -39,9 +40,11 @@ export function NodeCard({
   onHeaderPointerDown,
   onOutputPointerDown,
   onInputPointerUp,
+  onRun,
 }: Props) {
   const ring = isSelected ? 'var(--color-accent)' : STATUS_RING[node.status];
   const isTextNode = node.text != null;
+  const isBusy = node.status === 'queued' || node.status === 'running';
 
   return (
     <div
@@ -80,7 +83,7 @@ export function NodeCard({
           </Text>
         </HStack>
         <HStack gap={1} align="center">
-          {node.status === 'running' && <Spinner size="sm" />}
+          {isBusy && <Spinner size="sm" />}
           <Icon icon={MoreHorizontal} size="xsm" color="secondary" />
         </HStack>
       </HStack>
@@ -108,16 +111,26 @@ export function NodeCard({
             blockSize: 96,
             display: 'grid',
             placeItems: 'center',
+            padding: 'var(--spacing-2)',
             backgroundColor: 'var(--color-background-muted)',
           }}>
-          <Text type="supporting" color="disabled">
-            No output yet
-          </Text>
+          {node.status === 'error' ? (
+            <Text type="supporting" color="primary" maxLines={4} style={{color: 'var(--color-error)'}}>
+              {node.error ?? 'Run failed'}
+            </Text>
+          ) : (
+            <Text type="supporting" color="disabled">
+              {isBusy ? 'Generating…' : 'No output yet'}
+            </Text>
+          )}
         </div>
       )}
 
       {/* ------------------------------------------------------------- footer */}
-      {!isTextNode && (
+      {/* Only model-backed nodes can run. Brand nodes (Style Kit, Format,
+          Product Asset) carry constraints, so offering them a Run button
+          promises something that would silently do nothing. */}
+      {!isTextNode && node.model && (
         <HStack
           gap={1}
           align="center"
@@ -134,12 +147,31 @@ export function NodeCard({
           ) : (
             <span />
           )}
-          <HStack gap={0.5} align="center">
-            <Icon icon={Play} size="xsm" color="accent" />
-            <Text type="supporting" color="accent">
-              Run Model
+          <button
+            type="button"
+            // The card itself starts a drag on pointerdown, so the button has to
+            // claim the event before it bubbles.
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              onRun();
+            }}
+            disabled={isBusy}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--spacing-0-5)',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: isBusy ? 'progress' : 'pointer',
+              color: 'inherit',
+            }}>
+            <Icon icon={Play} size="xsm" color={isBusy ? 'disabled' : 'accent'} />
+            <Text type="supporting" color={isBusy ? 'disabled' : 'accent'}>
+              {isBusy ? 'Running…' : 'Run'}
             </Text>
-          </HStack>
+          </button>
         </HStack>
       )}
 
