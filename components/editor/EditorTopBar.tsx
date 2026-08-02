@@ -20,6 +20,9 @@ interface Props {
   isRunning: boolean;
   /** How many nodes the backend can actually execute. Zero disables Run all. */
   runnableCount: number;
+  /** Shown when a brand is locked in, so it is visible what output is bound to. */
+  brandName: string;
+  isBrandReady: boolean;
   onRunAll: () => void;
 }
 
@@ -29,6 +32,8 @@ export function EditorTopBar({
   nodeCount,
   isRunning,
   runnableCount,
+  brandName,
+  isBrandReady,
   onRunAll,
 }: Props) {
   return (
@@ -51,9 +56,17 @@ export function EditorTopBar({
       }
       endContent={
         <HStack gap={2} align="center">
-          <Text type="supporting" color="disabled">
-            {nodeCount} nodes
-          </Text>
+          {isBrandReady ? (
+            <Text type="supporting" color="disabled">
+              {brandName || 'Brand'} · {nodeCount} nodes
+            </Text>
+          ) : (
+            <Link href="/brand">
+              <Text type="supporting" color="accent">
+                Set up brand kit
+              </Text>
+            </Link>
+          )}
           <Button
             label={isRunning ? 'Running workflow…' : 'Run all'}
             variant="primary"
@@ -62,7 +75,11 @@ export function EditorTopBar({
             isLoading={isRunning}
             isDisabled={runnableCount === 0}
             tooltip={
-              runnableCount === 0 ? 'Add a model node before running the workflow' : undefined
+              !isBrandReady
+                ? 'Set up your brand kit first — generation is locked to it'
+                : runnableCount === 0
+                  ? 'Add a model node before running the workflow'
+                  : undefined
             }
             onClick={onRunAll}
           />

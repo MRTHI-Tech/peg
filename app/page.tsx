@@ -6,6 +6,7 @@ import {Heading, Text} from '@astryxdesign/core/Text';
 import {Button} from '@astryxdesign/core/Button';
 import {Divider} from '@astryxdesign/core/Divider';
 
+import {BrandGateBanner} from '@/components/brand/BrandGateBanner';
 import {PegLogo} from '@/components/brand/PegLogo';
 import {CreditsPill} from '@/components/chrome/CreditsPill';
 import {WorkflowCard} from '@/components/gallery/WorkflowCard';
@@ -40,6 +41,7 @@ export default function GalleryPage() {
           }
           endContent={
             <HStack gap={2} align="center">
+              <Button label="Brand kit" variant="ghost" size="sm" href="/brand" />
               <CreditsPill />
               <Button
                 label="New project"
@@ -61,6 +63,8 @@ export default function GalleryPage() {
             lineage to storage.
           </Text>
         </VStack>
+
+        <BrandGateBanner />
 
         <VStack gap={3}>
           <Heading level={2}>Start from a template</Heading>

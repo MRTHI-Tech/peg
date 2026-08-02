@@ -367,7 +367,30 @@ def run_outpaint(req: RunRequest) -> RunOutcome:
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 
+def _brand_locked(prompt: str) -> str:
+    """Prepend the workspace brand to a prompt.
+
+    Applied here rather than in the browser so it cannot be bypassed and so it
+    covers every operation uniformly. Text conditioning is used because it is the
+    mechanism actually proven to hold; reference-image conditioning is untested.
+
+    A missing or incomplete brand is not an error — PEG still generates, just
+    without a lock.
+    """
+    try:
+        import brand as brand_module
+
+        prefix = brand_module.load_brand().prompt_prefix().strip()
+    except Exception:  # noqa: BLE001 — never fail a run over the brand document
+        return prompt
+
+    if not prefix:
+        return prompt
+    return f"{prefix} {prompt}".strip() if prompt.strip() else prefix
+
+
 def execute(req: RunRequest) -> RunOutcome:
+    req = req.model_copy(update={"prompt": _brand_locked(req.prompt)})
     if req.operation == "outpaint":
         return run_outpaint(req)
     return run_generate(req)

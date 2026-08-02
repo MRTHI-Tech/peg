@@ -13,6 +13,7 @@ import {defaultParams, getNodeDef} from '@/lib/catalog';
 import {fitViewport, graphBounds, type Viewport} from '@/lib/canvas-geometry';
 import {toRunFormat} from '@/lib/formats';
 import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
+import {useBrand} from '@/lib/use-brand';
 import {useMediaQuery} from '@/lib/use-media-query';
 import {executeRun, toAssetRef, toProvenance} from '@/lib/workflow-service';
 import type {Edge, NodeCategory, ParamValue, PegNode, Workflow} from '@/lib/types';
@@ -43,6 +44,10 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   const [viewport, setViewport] = useState<Viewport>({x: 0, y: 0, zoom: 0.75});
   const [railSection, setRailSection] = useState<RailSection>('image-models');
   const [isPaletteOpen, setIsPaletteOpen] = useState(true);
+
+  // Soft gate: the canvas always opens, but generation is withheld until the
+  // brand can actually lock it — otherwise output is on-brand by accident.
+  const {brand, isReady: isBrandReady} = useBrand();
 
   const isNarrow = useMediaQuery('(max-width: 1100px)');
   const isVeryNarrow = useMediaQuery('(max-width: 820px)');
@@ -402,7 +407,9 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           onNameChange={setName}
           nodeCount={nodes.length}
           isRunning={isRunning}
-          runnableCount={nodes.filter(isExecutableNode).length}
+          runnableCount={isBrandReady ? nodes.filter(isExecutableNode).length : 0}
+          brandName={brand.name}
+          isBrandReady={isBrandReady}
           onRunAll={runAll}
         />
       }>
@@ -433,6 +440,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
               nodes={selectedNodes}
               totalCost={totalCost}
               isRunning={isRunning}
+              isBrandReady={isBrandReady}
               onRun={runSelected}
               onParamChange={updateParam}
               onDelete={deleteSelection}

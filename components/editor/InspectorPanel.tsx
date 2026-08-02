@@ -24,6 +24,7 @@ interface Props {
   nodes: PegNode[];
   totalCost: number;
   isRunning: boolean;
+  isBrandReady: boolean;
   onRun: () => void;
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
   onDelete: () => void;
@@ -33,7 +34,15 @@ interface Props {
  * Right-hand inspector. Shows the parameters of a single selection, or a
  * summary plus run controls when several nodes are selected.
  */
-export function InspectorPanel({nodes, totalCost, isRunning, onRun, onParamChange, onDelete}: Props) {
+export function InspectorPanel({
+  nodes,
+  totalCost,
+  isRunning,
+  isBrandReady,
+  onRun,
+  onParamChange,
+  onDelete,
+}: Props) {
   const single = nodes.length === 1 ? nodes[0] : null;
   const runnable = nodes.filter(isExecutableNode);
 
@@ -95,9 +104,13 @@ export function InspectorPanel({nodes, totalCost, isRunning, onRun, onParamChang
                 width="100%"
                 icon={<Icon icon={Play} size="xsm" />}
                 isLoading={isRunning}
-                isDisabled={runnable.length === 0}
+                isDisabled={runnable.length === 0 || !isBrandReady}
                 tooltip={
-                  runnable.length === 0 ? 'Select a model node to run' : undefined
+                  !isBrandReady
+                    ? 'Set up your brand kit first'
+                    : runnable.length === 0
+                      ? 'Select a model node to run'
+                      : undefined
                 }
                 onClick={onRun}
               />
