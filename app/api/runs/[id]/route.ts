@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_URL} from '@/lib/service-config';
+import {SERVICE_HEADERS, SERVICE_URL} from '@/lib/service-config';
 
 /** Poll one run. The client calls this on an interval until it settles. */
 export async function GET(_request: Request, {params}: {params: Promise<{id: string}>}) {
@@ -9,6 +9,7 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
   try {
     const upstream = await fetch(`${SERVICE_URL}/runs/${encodeURIComponent(id)}`, {
       cache: 'no-store',
+      headers: SERVICE_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
 

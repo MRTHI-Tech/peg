@@ -19,7 +19,7 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import runner
@@ -80,6 +80,23 @@ async def _execute(job_id: str, req: RunRequest) -> None:
             job.provenance = outcome.provenance
 
 
+def require_token(x_peg_token: str | None = Header(default=None)) -> None:
+    """Shared-secret gate on anything that costs money.
+
+    Render's private services are a paid feature, so on the free tier this
+    service has a public URL. Without this, the generation endpoints would be an
+    open door onto someone else's GMI credits.
+
+    Unset means open, which keeps local development frictionless — but the
+    deployed blueprint always sets it.
+    """
+    expected = os.environ.get("PEG_SERVICE_TOKEN", "").strip()
+    if not expected:
+        return
+    if x_peg_token != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing service token")
+
+
 @app.get("/health")
 async def health() -> dict:
     async with _LOCK:
@@ -88,7 +105,7 @@ async def health() -> dict:
 
 
 @app.post("/runs", response_model=RunResponse, status_code=202)
-async def create_run(req: RunRequest) -> RunResponse:
+async def create_run(req: RunRequest, _: None = Depends(require_token)) -> RunResponse:
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     job = RunResponse(run_id=job_id, node_id=req.node_id, status=RunStatus.queued)
     async with _LOCK:
@@ -100,7 +117,7 @@ async def create_run(req: RunRequest) -> RunResponse:
 
 
 @app.get("/runs/{job_id}", response_model=RunResponse)
-async def get_run(job_id: str) -> RunResponse:
+async def get_run(job_id: str, _: None = Depends(require_token)) -> RunResponse:
     async with _LOCK:
         job = _JOBS.get(job_id)
     if job is None:

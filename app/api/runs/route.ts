@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_URL} from '@/lib/service-config';
+import {SERVICE_HEADERS, SERVICE_URL} from '@/lib/service-config';
 
 /**
  * Submit a generation run.
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   try {
     const upstream = await fetch(`${SERVICE_URL}/runs`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: SERVICE_HEADERS,
       body: JSON.stringify(body),
       // Submission returns immediately; the long work happens behind polling.
       signal: AbortSignal.timeout(30_000),
