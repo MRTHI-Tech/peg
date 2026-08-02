@@ -5,6 +5,7 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {AppShell} from '@astryxdesign/core/AppShell';
 import {Layout, LayoutPanel} from '@astryxdesign/core/Layout';
 import {HStack} from '@astryxdesign/core/Stack';
+import {EmptyState} from '@astryxdesign/core/EmptyState';
 
 import {NodeCanvas} from '@/components/canvas/NodeCanvas';
 import {estimateNodeHeight} from '@/components/canvas/node-metrics';
@@ -401,6 +402,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           onNameChange={setName}
           nodeCount={nodes.length}
           isRunning={isRunning}
+          runnableCount={nodes.filter(isExecutableNode).length}
           onRunAll={runAll}
         />
       }>
@@ -438,6 +440,24 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           )
         }>
         <div ref={canvasHostRef} style={{position: 'relative', blockSize: '100%', inlineSize: '100%'}}>
+          {nodes.length === 0 && (
+            // A blank canvas is otherwise just an empty grid with no affordance.
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'grid',
+                placeItems: 'center',
+                pointerEvents: 'none',
+                zIndex: 1,
+              }}>
+              <EmptyState
+                title="Empty canvas"
+                description="Add a Brand Kit and a Brief from the palette, then a Brand Scene to generate."
+                isCompact
+              />
+            </div>
+          )}
           <NodeCanvas
             nodes={nodes}
             edges={edges}

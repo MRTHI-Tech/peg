@@ -11,7 +11,7 @@ import {CreditsPill} from '@/components/chrome/CreditsPill';
 import {WorkflowCard} from '@/components/gallery/WorkflowCard';
 import {TemplateCard} from '@/components/gallery/TemplateCard';
 import {listWorkflows} from '@/lib/workflow-service';
-import {TEMPLATES} from '@/lib/mock-data';
+import {NEW_WORKFLOW_ID, TEMPLATES} from '@/lib/mock-data';
 
 /**
  * Project gallery.
@@ -22,7 +22,6 @@ import {TEMPLATES} from '@/lib/mock-data';
  */
 export default function GalleryPage() {
   const workflows = listWorkflows();
-  const firstProject = workflows[0];
 
   return (
     <AppShell
@@ -46,7 +45,7 @@ export default function GalleryPage() {
                 label="New project"
                 variant="primary"
                 size="sm"
-                href={`/project/${firstProject.id}`}
+                href={`/project/${NEW_WORKFLOW_ID}`}
               />
             </HStack>
           }
@@ -65,7 +64,9 @@ export default function GalleryPage() {
 
         <VStack gap={3}>
           <Heading level={2}>Start from a template</Heading>
-          <Grid columns={{minWidth: 236, repeat: 'fit'}} gap={3}>
+          {/* 'fill' not 'fit': fit collapses empty tracks, so a single template
+              card would stretch the full width of the page. */}
+          <Grid columns={{minWidth: 236, max: 4, repeat: 'fill'}} gap={3}>
             {TEMPLATES.map(template => (
               <TemplateCard key={template.id} template={template} />
             ))}

@@ -9,7 +9,7 @@
  * id immediately and `pollRun` reports progress until it settles.
  */
 
-import {HERO_WORKFLOW, WORKFLOWS} from './mock-data';
+import {HERO_WORKFLOW, NEW_WORKFLOW_ID, WORKFLOWS, createEmptyWorkflow} from './mock-data';
 import type {AssetRef, Provenance, Workflow} from './types';
 
 export function listWorkflows(): Workflow[] {
@@ -17,6 +17,9 @@ export function listWorkflows(): Workflow[] {
 }
 
 export function getWorkflow(id: string): Workflow | undefined {
+  // `new` is a blank canvas rather than a stored document — nothing is persisted
+  // until a run writes to B2, so a fresh project needs no record to exist first.
+  if (id === NEW_WORKFLOW_ID) return createEmptyWorkflow();
   return WORKFLOWS.find(w => w.id === id) ?? (id === HERO_WORKFLOW.id ? HERO_WORKFLOW : undefined);
 }
 

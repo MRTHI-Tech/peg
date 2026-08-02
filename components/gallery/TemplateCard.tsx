@@ -13,13 +13,14 @@ interface Template {
   id: string;
   name: string;
   description: string;
+  workflowId: string;
   nodeCount: number;
   palette: string;
 }
 
 export function TemplateCard({template}: {template: Template}) {
   return (
-    <ClickableCard label={`Start from ${template.name}`} href="/project/my-first-peg" padding={0}>
+    <ClickableCard label={`Start from ${template.name}`} href={`/project/${template.workflowId}`} padding={0}>
       <VStack gap={0}>
         <div
           style={{

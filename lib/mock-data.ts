@@ -308,35 +308,36 @@ export const WORKFLOWS: Workflow[] = [
   },
 ];
 
-/** Starter graphs offered on the gallery page. */
+/** The id the editor treats as "start from nothing". */
+export const NEW_WORKFLOW_ID = 'new';
+
+/** A blank canvas. Everything is added from the palette. */
+export function createEmptyWorkflow(): Workflow {
+  return {
+    id: NEW_WORKFLOW_ID,
+    name: 'Untitled project',
+    nodes: [],
+    edges: [],
+    updatedAt: new Date().toISOString(),
+    nodeCount: 0,
+  };
+}
+
+/**
+ * Starter graphs offered on the gallery page.
+ *
+ * Only templates that map to a workflow that actually exists are listed —
+ * a card that opens a 404, or silently drops you on a blank canvas, is worse
+ * than not offering it. Add entries here as their graphs get built.
+ */
 export const TEMPLATES = [
   {
-    id: 'hero-plate',
-    name: 'Hero Plate',
-    description: 'Brand kit plus a brief into a breakpoint-correct hero background.',
-    nodeCount: 5,
+    id: 'breakpoint-fan-out',
+    workflowId: HERO_WORKFLOW.id,
+    name: 'Breakpoint Fan-out',
+    description: 'One brief and one generation, composed for desktop, mobile, and square.',
+    nodeCount: HERO_WORKFLOW.nodeCount,
     palette: 'dusk',
-  },
-  {
-    id: 'product-composite',
-    name: 'Product Composite',
-    description: 'Generate the plate, then drop the real product cutout on the focal point.',
-    nodeCount: 7,
-    palette: 'bloom',
-  },
-  {
-    id: 'breakpoint-set',
-    name: 'Breakpoint Set',
-    description: 'One brief composed separately for desktop, mobile, and square.',
-    nodeCount: 9,
-    palette: 'ice',
-  },
-  {
-    id: 'extend-canvas',
-    name: 'Extend Canvas',
-    description: 'Take an existing plate and gen-fill it out to a taller crop.',
-    nodeCount: 4,
-    palette: 'ember',
   },
 ];
 

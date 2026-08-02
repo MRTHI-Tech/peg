@@ -18,10 +18,19 @@ interface Props {
   onNameChange: (name: string) => void;
   nodeCount: number;
   isRunning: boolean;
+  /** How many nodes the backend can actually execute. Zero disables Run all. */
+  runnableCount: number;
   onRunAll: () => void;
 }
 
-export function EditorTopBar({name, onNameChange, nodeCount, isRunning, onRunAll}: Props) {
+export function EditorTopBar({
+  name,
+  onNameChange,
+  nodeCount,
+  isRunning,
+  runnableCount,
+  onRunAll,
+}: Props) {
   return (
     <TopNav
       label="Project"
@@ -51,6 +60,10 @@ export function EditorTopBar({name, onNameChange, nodeCount, isRunning, onRunAll
             size="sm"
             icon={<Icon icon={Play} size="xsm" />}
             isLoading={isRunning}
+            isDisabled={runnableCount === 0}
+            tooltip={
+              runnableCount === 0 ? 'Add a model node before running the workflow' : undefined
+            }
             onClick={onRunAll}
           />
           <Button
