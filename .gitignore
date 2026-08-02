@@ -1,0 +1,30 @@
+# Secrets — never commit. Real values live in .env.local only.
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+service/.venv/
+__pycache__/
+*.py[cod]
+
+# Build output
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Generated media and local run artifacts
+service/output/
+service/manifests/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Claude Code local settings (may contain machine-specific paths)
+.claude/settings.local.json

@@ -1,0 +1,8 @@
+# Python 3.11+ required — genblaze does not support 3.10 or below.
+# Install into the local venv:
+#   ./service/.venv/bin/pip install -r service/requirements.txt
+
+genblaze[gmicloud]==0.4.5
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+python-dotenv==1.2.2
