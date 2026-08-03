@@ -34,6 +34,11 @@ class BreakpointGeometryTests(unittest.TestCase):
 
         draw = ImageDraw.Draw(image)
         cyan = (0, 240, 244)
+        halo = (35, 190, 194)
+        draw.rectangle((10, 10, 289, 10), fill=halo)
+        draw.rectangle((10, 289, 289, 289), fill=halo)
+        draw.rectangle((10, 10, 10, 289), fill=halo)
+        draw.rectangle((289, 10, 289, 289), fill=halo)
         draw.rectangle((0, 0, 299, 9), fill=cyan)
         draw.rectangle((0, 290, 299, 299), fill=cyan)
         draw.rectangle((0, 0, 9, 299), fill=cyan)
@@ -68,7 +73,7 @@ class BreakpointGeometryTests(unittest.TestCase):
             safe_area="upper-third",
         )
 
-        self.assertEqual(runner._placement_for_format(self.source.size, fmt), ((736, 736), (46, 368)))
+        self.assertEqual(runner._placement_for_format(self.source.size, fmt), ((828, 828), (0, 276)))
         canvas, mask = self.decode(fmt)
 
         self.assertEqual(canvas.size, (828, 1104))
@@ -83,11 +88,29 @@ class BreakpointGeometryTests(unittest.TestCase):
             safe_area="upper-third",
         )
 
-        self.assertEqual(runner._placement_for_format(self.source.size, fmt), ((720, 720), (180, 360)))
+        self.assertEqual(runner._placement_for_format(self.source.size, fmt), ((1080, 1080), (0, 0)))
         _, mask = self.decode(fmt)
 
         self.assertEqual(mask.getpixel((540, 100)), 255)
         self.assertEqual(mask.getpixel((540, 720)), 0)
+
+    def test_portrait_never_shrinks_the_source_into_a_four_sided_island(self) -> None:
+        fmt = FormatSpec(
+            width=1080,
+            height=1920,
+            focal_point="right",
+            safe_area="left-third",
+        )
+
+        self.assertEqual(
+            runner._placement_for_format(self.source.size, fmt),
+            ((1080, 1080), (0, 420)),
+        )
+        canvas, mask = self.decode(fmt)
+
+        self.assertEqual(canvas.size, (1080, 1920))
+        self.assertEqual(mask.getpixel((100, 960)), 255)
+        self.assertEqual(mask.getpixel((900, 960)), 0)
 
     def test_mask_feathers_the_preserved_boundary(self) -> None:
         fmt = FormatSpec(
@@ -121,6 +144,9 @@ class BreakpointGeometryTests(unittest.TestCase):
         def close(pixel: tuple[int, int, int], expected: tuple[int, int, int]) -> bool:
             return max(abs(a - b) for a, b in zip(pixel, expected)) < 16
 
+        def cyan_like(pixel: tuple[int, int, int]) -> bool:
+            return pixel[1] > pixel[0] + 80 and pixel[2] > pixel[0] + 80
+
         # The frame surrounds the complete wide result and is never offered to
         # genfill, so brand chrome cannot be repainted or omitted.
         for point in ((0, 150), (450, 0), (899, 150), (450, 299)):
@@ -144,10 +170,33 @@ class BreakpointGeometryTests(unittest.TestCase):
         for point in ((0, 150), (450, 0), (899, 150), (450, 299)):
             self.assertTrue(close(completed.getpixel(point), cyan))
         completed_internal_cyan = sum(
-            close(completed.getpixel((610, y)), cyan) for y in range(10, 290)
+            cyan_like(completed.getpixel((610, y))) for y in range(10, 290)
         )
         self.assertLess(completed_internal_cyan, 10)
         self.assertLess(max(completed.getpixel((850, 250))), 32)
+
+    def test_portrait_moves_a_flattened_corner_lockup_to_the_final_corner(self) -> None:
+        self.source = self.framed_artwork()
+        fmt = FormatSpec(
+            width=300,
+            height=600,
+            focal_point="right",
+            safe_area="left-third",
+        )
+
+        canvas, mask = self.decode(fmt)
+        cyan = (0, 240, 244)
+
+        def close(pixel: tuple[int, int, int], expected: tuple[int, int, int]) -> bool:
+            return max(abs(a - b) for a, b in zip(pixel, expected)) < 16
+
+        # The scene spans the portrait's full inner width. The old lockup area
+        # around y=390 is generated, while the exact panel is protected at the
+        # final bottom-right corner.
+        self.assertEqual(mask.getpixel((250, 390)), 255)
+        self.assertEqual(mask.getpixel((250, 550)), 0)
+        self.assertTrue(close(canvas.getpixel((295, 550)), cyan))
+        self.assertLess(max(canvas.getpixel((250, 550))), 32)
 
     def test_unframed_gradient_does_not_trigger_frame_extraction(self) -> None:
         source = Image.new("RGB", (300, 300))
