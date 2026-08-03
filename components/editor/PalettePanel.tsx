@@ -31,6 +31,7 @@ import {Text} from '@astryxdesign/core/Text';
 import {Icon} from '@astryxdesign/core/Icon';
 import {Badge} from '@astryxdesign/core/Badge';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
+import {Tooltip} from '@astryxdesign/core/Tooltip';
 
 import {CATALOG, CATEGORY_LABELS, isLive} from '@/lib/catalog';
 import {PORT_TYPE_COLOR} from '@/lib/canvas-geometry';
@@ -204,63 +205,53 @@ function PaletteTile({def, onClick}: {def: NodeDef; onClick: () => void}) {
   const glyph = TYPE_ICONS[def.type] ?? CATEGORY_ICONS[def.category];
   const outputType = def.outputs[0]?.type;
   const live = isLive(def);
+  const tooltip = live ? (def.description ?? def.title) : `${def.title} — coming soon`;
 
   return (
-    <button
-      type="button"
-      onClick={live ? onClick : undefined}
-      disabled={!live}
-      aria-disabled={!live}
-      title={
-        live
-          ? def.description
-            ? `${def.title} — ${def.description}`
-            : def.title
-          : `${def.title} — coming soon`
-      }
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--spacing-1)',
-        alignItems: 'flex-start',
-        padding: 'var(--spacing-1-5)',
-        minBlockSize: 70,
-        backgroundColor: 'var(--color-background-card)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--radius-element)',
-        cursor: live ? 'pointer' : 'not-allowed',
-        opacity: live ? 1 : 0.55,
-        textAlign: 'start',
-        color: 'inherit',
-        // Grid items default to min-content width; without this a long model id
-        // like `seededit-3-0-i2i-250628` widens the column past the panel.
-        minInlineSize: 0,
-        overflow: 'hidden',
-      }}>
-      <HStack gap={1} align="center" justify="between" style={{inlineSize: '100%'}}>
-        <Icon icon={glyph} size="xsm" color={live ? 'secondary' : 'disabled'} />
-        {outputType && live && (
-          <span
-            aria-hidden="true"
-            style={{
-              inlineSize: 6,
-              blockSize: 6,
-              borderRadius: '50%',
-              backgroundColor: PORT_TYPE_COLOR[outputType] ?? 'var(--color-border-emphasized)',
-            }}
-          />
-        )}
-      </HStack>
-      <Text type="supporting" color={live ? 'primary' : 'disabled'} maxLines={2}>
-        {def.title}
-      </Text>
-      {/* The job is the headline; the model is reference detail for whoever cares. */}
-      {def.model && (
-        <Text type="supporting" color="disabled" maxLines={1}>
-          {def.model}
+    <Tooltip content={tooltip} placement="end" alignment="start" hasHoverIndication={false}>
+      <button
+        type="button"
+        onClick={live ? onClick : undefined}
+        disabled={!live}
+        aria-disabled={!live}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--spacing-1)',
+          alignItems: 'flex-start',
+          padding: 'var(--spacing-1-5)',
+          minBlockSize: 70,
+          backgroundColor: 'var(--color-background-card)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-element)',
+          cursor: live ? 'pointer' : 'not-allowed',
+          opacity: live ? 1 : 0.55,
+          textAlign: 'start',
+          color: 'inherit',
+          // Grid items default to min-content width, so long job names need an
+          // explicit escape hatch to keep both columns inside the panel.
+          minInlineSize: 0,
+          overflow: 'hidden',
+        }}>
+        <HStack gap={1} align="center" justify="between" style={{inlineSize: '100%'}}>
+          <Icon icon={glyph} size="xsm" color={live ? 'secondary' : 'disabled'} />
+          {outputType && live && (
+            <span
+              aria-hidden="true"
+              style={{
+                inlineSize: 6,
+                blockSize: 6,
+                borderRadius: '50%',
+                backgroundColor: PORT_TYPE_COLOR[outputType] ?? 'var(--color-border-emphasized)',
+              }}
+            />
+          )}
+        </HStack>
+        <Text type="supporting" color={live ? 'primary' : 'disabled'} maxLines={2}>
+          {def.title}
         </Text>
-      )}
-      {!live && <Badge variant="neutral" label="Soon" />}
-    </button>
+        {!live && <Badge variant="neutral" label="Soon" />}
+      </button>
+    </Tooltip>
   );
 }

@@ -88,6 +88,96 @@ export interface Bounds {
   maxY: number;
 }
 
+export interface PlacementRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface OpenPositionOptions {
+  desired: {x: number; y: number};
+  size: {width: number; height: number};
+  occupied: PlacementRect[];
+  visibleBounds: Bounds;
+  gap?: number;
+}
+
+/**
+ * Find the nearest open slot around a preferred canvas position.
+ *
+ * New nodes still begin at the center of the current view, but once that spot
+ * is occupied the search expands outwards. Fully visible positions win over a
+ * nearer off-screen one, so adding a node always produces something the user
+ * can see when the current viewport has room for it.
+ */
+export function findOpenNodePosition({
+  desired,
+  size,
+  occupied,
+  visibleBounds,
+  gap = 24,
+}: OpenPositionOptions): {x: number; y: number} {
+  const stepX = size.width + gap;
+  const stepY = size.height + gap;
+  let nearestOpen: {x: number; y: number} | undefined;
+  let nearestVisible: {x: number; y: number} | undefined;
+
+  const offsets = [{x: 0, y: 0}];
+  for (let ring = 1; ring <= 12; ring += 1) {
+    const perimeter: Array<{x: number; y: number}> = [];
+    for (let x = -ring; x <= ring; x += 1) {
+      for (let y = -ring; y <= ring; y += 1) {
+        if (Math.max(Math.abs(x), Math.abs(y)) === ring) perimeter.push({x, y});
+      }
+    }
+    // Try cardinal directions before diagonals, rotating right → down → left → up.
+    perimeter.sort((a, b) => {
+      const distance = Math.abs(a.x) + Math.abs(a.y) - (Math.abs(b.x) + Math.abs(b.y));
+      if (distance !== 0) return distance;
+      const angleA = (Math.atan2(a.y, a.x) + Math.PI * 2) % (Math.PI * 2);
+      const angleB = (Math.atan2(b.y, b.x) + Math.PI * 2) % (Math.PI * 2);
+      return angleA - angleB;
+    });
+    offsets.push(...perimeter);
+  }
+
+  for (const offset of offsets) {
+    const candidate: PlacementRect = {
+      x: desired.x + offset.x * stepX,
+      y: desired.y + offset.y * stepY,
+      ...size,
+    };
+    const isOpen = occupied.every(
+      other =>
+        candidate.x + candidate.width + gap <= other.x ||
+        other.x + other.width + gap <= candidate.x ||
+        candidate.y + candidate.height + gap <= other.y ||
+        other.y + other.height + gap <= candidate.y,
+    );
+    if (!isOpen) continue;
+
+    const position = {x: candidate.x, y: candidate.y};
+    nearestOpen ??= position;
+
+    const isFullyVisible =
+      candidate.x >= visibleBounds.minX &&
+      candidate.y >= visibleBounds.minY &&
+      candidate.x + candidate.width <= visibleBounds.maxX &&
+      candidate.y + candidate.height <= visibleBounds.maxY;
+    if (isFullyVisible) return position;
+
+    const isPartlyVisible =
+      candidate.x < visibleBounds.maxX &&
+      candidate.y < visibleBounds.maxY &&
+      candidate.x + candidate.width > visibleBounds.minX &&
+      candidate.y + candidate.height > visibleBounds.minY;
+    if (isPartlyVisible) nearestVisible ??= position;
+  }
+
+  return nearestVisible ?? nearestOpen ?? desired;
+}
+
 /** Bounding box of all nodes, in world space. Heights are estimated. */
 export function graphBounds(nodes: PegNode[], estimateHeight: (n: PegNode) => number): Bounds | null {
   if (nodes.length === 0) return null;

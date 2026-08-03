@@ -23,6 +23,9 @@ interface Props {
   /** Shown when a brand is locked in, so it is visible what output is bound to. */
   brandName: string;
   isBrandReady: boolean;
+  saveStatus: 'loading' | 'load-error' | 'unsaved' | 'saving' | 'saved' | 'error';
+  saveError?: string;
+  onRetrySave: () => void;
   onRunAll: () => void;
 }
 
@@ -34,8 +37,13 @@ export function EditorTopBar({
   runnableCount,
   brandName,
   isBrandReady,
+  saveStatus,
+  saveError,
+  onRetrySave,
   onRunAll,
 }: Props) {
+  const isHydrating = saveStatus === 'loading' || saveStatus === 'load-error';
+
   return (
     <TopNav
       label="Project"
@@ -50,12 +58,46 @@ export function EditorTopBar({
             size="sm"
             value={name}
             onChange={onNameChange}
+            isDisabled={isHydrating}
+            disabledMessage="Loading the saved project"
             width={220}
           />
         </HStack>
       }
       endContent={
         <HStack gap={2} align="center">
+          {saveStatus === 'load-error' ? (
+            <Button
+              label="Couldn't load · Retry"
+              variant="ghost"
+              size="sm"
+              tooltip={saveError}
+              onClick={onRetrySave}
+            />
+          ) : saveStatus === 'error' ? (
+            <HStack gap={1} align="center">
+              <Text type="supporting" color="accent">
+                Saved on this device
+              </Text>
+              <Button
+                label="Retry cloud save"
+                variant="ghost"
+                size="sm"
+                tooltip={saveError}
+                onClick={onRetrySave}
+              />
+            </HStack>
+          ) : (
+            <Text type="supporting" color="disabled">
+              {saveStatus === 'loading'
+                ? 'Loading…'
+                : saveStatus === 'saving'
+                  ? 'Saving…'
+                  : saveStatus === 'unsaved'
+                    ? 'Unsaved changes'
+                    : 'Saved'}
+            </Text>
+          )}
           {isBrandReady ? (
             <Text type="supporting" color="disabled">
               {brandName || 'Brand'} · {nodeCount} nodes
@@ -73,7 +115,7 @@ export function EditorTopBar({
             size="sm"
             icon={<Icon icon={Play} size="xsm" />}
             isLoading={isRunning}
-            isDisabled={runnableCount === 0}
+            isDisabled={runnableCount === 0 || isHydrating}
             tooltip={
               !isBrandReady
                 ? 'Set up your brand kit first — generation is locked to it'

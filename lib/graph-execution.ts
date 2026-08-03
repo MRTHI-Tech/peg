@@ -4,11 +4,13 @@ export interface DependencyEdge {
   toNode: string;
 }
 
-/** The backend currently executes GMI image steps; other catalog jobs are UI-only. */
+/** Model steps and PEG's deterministic local renderers execute in the service. */
 export function isExecutableNode<T extends {provider?: string; model?: string}>(
   node: T,
-): node is T & {provider: 'gmicloud-image'; model: string} {
-  return node.provider === 'gmicloud-image' && Boolean(node.model);
+): node is T & {provider: 'gmicloud-image' | 'peg-local'; model: string} {
+  return (
+    (node.provider === 'gmicloud-image' || node.provider === 'peg-local') && Boolean(node.model)
+  );
 }
 
 export interface ExecutionPlan {

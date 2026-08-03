@@ -21,8 +21,8 @@ import {PegLogo} from '@/components/brand/PegLogo';
  * controls would mean owning OAuth, email codes, MFA, bot protection, and every
  * error state by hand, which is where auth bugs live.
  *
- * Clerk's card chrome is flattened so its form reads as part of our Card rather
- * than a second surface floating inside one.
+ * Clerk's card chrome is flattened globally for these embedded component types
+ * so each form reads as part of our Card rather than a second floating surface.
  */
 const COLUMN_MIN_WIDTH = 240;
 
@@ -58,32 +58,6 @@ const SPLIT_CSS = `
   .auth-split-cover { order: -1; min-block-size: 160px; }
 }
 `;
-
-/**
- * Clerk renders its own card. Inside ours it needs to be flat, or the page shows
- * two nested surfaces with two borders.
- */
-const appearance = {
-  variables: {
-    colorBackground: 'transparent',
-    colorText: 'var(--color-text-primary)',
-    colorTextSecondary: 'var(--color-text-secondary)',
-    colorInputBackground: 'var(--color-background-surface)',
-    colorInputText: 'var(--color-text-primary)',
-    borderRadius: 'var(--radius-inner)',
-  },
-  elements: {
-    rootBox: {width: '100%'},
-    cardBox: {width: '100%', boxShadow: 'none', border: 'none'},
-    card: {
-      boxShadow: 'none',
-      border: 'none',
-      background: 'transparent',
-      padding: 0,
-    },
-    footer: {background: 'transparent'},
-  },
-};
 
 function AuthShell({children}: {children: ReactNode}) {
   return (
@@ -128,7 +102,7 @@ function AuthShell({children}: {children: ReactNode}) {
 export function SignInPanel() {
   return (
     <AuthShell>
-      <SignIn appearance={appearance} />
+      <SignIn />
     </AuthShell>
   );
 }
@@ -136,7 +110,7 @@ export function SignInPanel() {
 export function SignUpPanel() {
   return (
     <AuthShell>
-      <SignUp appearance={appearance} />
+      <SignUp />
     </AuthShell>
   );
 }
@@ -154,7 +128,6 @@ export function WorkspacePanel() {
   return (
     <AuthShell>
       <OrganizationList
-        appearance={appearance}
         hidePersonal
         skipInvitationScreen
         afterCreateOrganizationUrl="/"

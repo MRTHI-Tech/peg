@@ -26,7 +26,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import brand
 import runner
-from schemas import AssetKindIn, BrandAssetIn, BrandIn, RunRequest, RunResponse, RunStatus
+import workflows
+from schemas import (
+    AssetKindIn,
+    BrandAssetIn,
+    BrandIn,
+    RunRequest,
+    RunResponse,
+    RunStatus,
+    WorkflowIn,
+)
 
 # In-memory job store. Fine for a single instance; if this ever runs replicated,
 # move it to Redis or the B2 manifest index.
@@ -244,6 +253,47 @@ async def list_projects(
     """
     runs = await asyncio.to_thread(runner.list_runs, workspace)
     return {"projects": runs}
+
+
+@app.get("/workflows")
+async def get_workflows(
+    workspace: str = Depends(require_workspace), _: None = Depends(require_token)
+) -> dict:
+    """Every editable canvas owned by this workspace."""
+    items = await asyncio.to_thread(workflows.list_workflows, workspace)
+    return {"workflows": items}
+
+
+@app.get("/workflows/{workflow_id}")
+async def get_workflow(
+    workflow_id: str,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
+    try:
+        return await asyncio.to_thread(workflows.load_workflow, workspace, workflow_id)
+    except workflows.WorkflowNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except workflows.WorkflowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/workflows/{workflow_id}")
+async def put_workflow(
+    workflow_id: str,
+    payload: WorkflowIn,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
+    try:
+        return await asyncio.to_thread(
+            workflows.save_workflow,
+            workspace,
+            workflow_id,
+            payload.model_dump(),
+        )
+    except workflows.WorkflowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/runs", response_model=RunResponse, status_code=202)

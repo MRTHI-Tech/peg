@@ -20,6 +20,7 @@
  * documented surface.
  */
 
+import {FORMAT_SELECTOR_OPTIONS} from './formats';
 import type {NodeCategory, NodeDef, ParamSpec, Port} from './types';
 
 // ---------------------------------------------------------------------- ports
@@ -50,11 +51,11 @@ const textOut = (name = 'Text'): Port => ({id: 'text', name, type: 'text'});
 
 const RESOLUTION = {
   key: 'resolution',
-  label: 'Resolution',
+  label: 'Output size',
   kind: 'select',
-  options: ['1024x1024', '1536x640', '1920x600', '1280x720', '1080x1350', '1080x1920'],
+  options: FORMAT_SELECTOR_OPTIONS,
   default: '1536x640',
-  tooltip: 'Output pixel dimensions. Match this to the target breakpoint.',
+  tooltip: 'Choose exact pixel dimensions or a familiar publishing format.',
 } satisfies ParamSpec;
 
 const NEGATIVE_PROMPT = {
@@ -183,7 +184,7 @@ export const CATALOG: NodeDef[] = [
   },
   {
     type: 'product-asset',
-    title: 'Product Asset',
+    title: 'Brand Asset',
     category: 'brand',
     cost: 0,
     inputs: [],
@@ -192,13 +193,13 @@ export const CATALOG: NodeDef[] = [
       {
         key: 'assetKey',
         label: 'Asset',
-        kind: 'text',
+        kind: 'brand-asset',
         default: '',
-        tooltip: 'Transparent PNG pulled from the brand library in B2.',
+        tooltip: 'An approved screenshot, product, or logo from the workspace brand library.',
       },
     ],
     description:
-      'A real product cutout from the brand library. Never generated — diffusion cannot render your logo.',
+      'An approved original from the brand library. Its pixels are placed, never regenerated.',
   },
   {
     type: 'format',
@@ -210,10 +211,11 @@ export const CATALOG: NodeDef[] = [
     params: [
       {
         key: 'preset',
-        label: 'Breakpoint',
+        label: 'Output size',
         kind: 'select',
-        options: ['Desktop hero', 'Laptop hero', 'Tablet', 'Mobile hero', 'Square social', 'Story'],
-        default: 'Desktop hero',
+        options: FORMAT_SELECTOR_OPTIONS,
+        default: '1920x600',
+        tooltip: 'Choose exact pixel dimensions or a familiar publishing format.',
       },
       {
         key: 'safeArea',
@@ -394,6 +396,72 @@ export const CATALOG: NodeDef[] = [
       },
     ],
     description: 'Places the real product cutout onto the generated plate at the focal point. Runs locally.',
+  },
+  {
+    type: 'app-store-compose',
+    title: 'App Store Layout',
+    category: 'edit',
+    provider: 'peg-local',
+    model: 'app-store-layout-v1',
+    cost: 0,
+    inputs: [
+      imageIn('base', 'Background'),
+      imageIn('overlay', 'Screenshot'),
+      {id: 'format', name: 'Format', type: 'format', isRequired: false},
+    ],
+    outputs: [imageOut()],
+    params: [
+      {
+        key: 'outputSize',
+        label: 'Output size',
+        kind: 'select',
+        options: FORMAT_SELECTOR_OPTIONS,
+        default: 'app-store-iphone-6-9',
+        tooltip: 'Used unless a Format node is connected.',
+      },
+      {
+        key: 'layout',
+        label: 'Layout',
+        kind: 'select',
+        options: [
+          {value: 'copy-top', label: 'Copy above', description: 'Headline above a centered device'},
+          {value: 'copy-left', label: 'Copy left', description: 'Headline left, device right'},
+          {value: 'copy-right', label: 'Copy right', description: 'Device left, headline right'},
+          {value: 'device-only', label: 'Device only', description: 'Centered device without copy'},
+        ],
+        default: 'copy-top',
+      },
+      {
+        key: 'frameStyle',
+        label: 'Device frame',
+        kind: 'select',
+        options: [
+          {value: 'dark', label: 'Graphite', description: 'Neutral dark generic device'},
+          {value: 'light', label: 'Silver', description: 'Neutral light generic device'},
+          {value: 'none', label: 'Screen only', description: 'Rounded screenshot without a bezel'},
+        ],
+        default: 'dark',
+        tooltip: 'Generic by design; approved manufacturer artwork can be added later.',
+      },
+      {key: 'deviceScale', label: 'Device scale', kind: 'slider', min: 35, max: 100, step: 1, default: 88},
+      {key: 'deviceOffsetX', label: 'Horizontal position', kind: 'slider', min: -30, max: 30, step: 1, default: 0},
+      {key: 'deviceOffsetY', label: 'Vertical position', kind: 'slider', min: -30, max: 30, step: 1, default: 0},
+      {key: 'shadow', label: 'Device shadow', kind: 'toggle', default: true},
+      {key: 'headline', label: 'Headline', kind: 'text', default: 'Your best work, beautifully presented.'},
+      {key: 'subheadline', label: 'Supporting copy', kind: 'text', multiline: true, default: ''},
+      {key: 'textColor', label: 'Text colour', kind: 'text', default: '#FFFFFF', tooltip: 'Six-digit hex colour.'},
+      {
+        key: 'logoAssetKey',
+        label: 'Logo',
+        kind: 'brand-asset',
+        assetKinds: ['logo'],
+        isOptional: true,
+        default: '',
+        tooltip: 'Optional approved logo placed above the headline.',
+      },
+    ],
+    description:
+      'Builds an exact App Store image from a generated background and your authentic screenshot.',
   },
 
   // ================================================================= text tools

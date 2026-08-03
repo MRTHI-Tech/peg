@@ -138,7 +138,13 @@ export function NodeCard({
 
         {/* ------------------------------------------------------------- body */}
         {isTextNode ? (
-          <div style={{padding: 'var(--spacing-2)', maxBlockSize: 180, overflow: 'hidden'}}>
+          <div
+            style={{
+              minBlockSize: 96,
+              padding: 'var(--spacing-2)',
+              maxBlockSize: 180,
+              overflow: 'hidden',
+            }}>
             <Text type="supporting" color="secondary" maxLines={9}>
               {node.text}
             </Text>

@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,13 +30,14 @@ import cairosvg
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter
 
-from genblaze_core.models import Modality, parse_manifest
+from genblaze_core.models import Asset, Modality, StepType, parse_manifest
 from genblaze_core.pipeline import Pipeline
 from genblaze_core.storage import KeyStrategy, ObjectStorageSink
 from genblaze_gmicloud import GMICloudImageProvider
 from genblaze_s3 import S3StorageBackend
 
 from schemas import AssetOut, FormatSpec, ProvenanceOut, RunRequest
+from compositor import PegCompositorProvider
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
 
@@ -381,6 +383,11 @@ def _collect_run_output(run_id: str, workspace: str) -> tuple[AssetOut, Provenan
             if steps:
                 prov.provider = steps[0].get("provider")
                 prov.model = steps[0].get("model")
+                prov.input_asset_keys = [
+                    str((item.get("metadata") or {}).get("asset_key"))
+                    for item in (steps[0].get("inputs") or [])
+                    if (item.get("metadata") or {}).get("asset_key")
+                ]
             prov.created_at = run.get("created_at") or run.get("started_at")
         except Exception:  # noqa: BLE001 — a malformed manifest should not fail the run
             pass
@@ -497,6 +504,94 @@ def run_generate(
     )
     asset, prov = _collect_run_output(run_id, workspace)
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
+
+
+def _staged_asset(directory: Path, role: str, source_key: str, raw: bytes) -> Asset:
+    """Write a workspace-owned input under the run's temporary root.
+
+    Genblaze records the content hash rather than a rotating B2 presigned URL,
+    keeping the compositor manifest stable across reruns of the same inputs.
+    """
+    # Brand logos may be stored as SVG, while Pillow deliberately consumes
+    # raster inputs only. Rasterize the staged copy; the approved original in
+    # B2 remains untouched.
+    if role == "logo" and b"<svg" in raw[:1024].lower():
+        raw = cairosvg.svg2png(bytestring=raw, output_width=1024)
+    path = directory / f"{role}.asset"
+    path.write_bytes(raw)
+    asset = Asset(
+        url=path.resolve().as_uri(),
+        media_type="image/png",
+        metadata={"peg_role": role, "asset_key": source_key},
+    )
+    asset.set_hash(raw)
+    return asset
+
+
+def run_compose(req: RunRequest, workspace: str) -> RunOutcome:
+    if req.format is None:
+        raise RunFailed("composition requires an output format")
+    if not req.source_asset_key:
+        raise RunFailed("composition requires a background")
+    if not req.overlay_asset_key:
+        raise RunFailed("composition requires an app screenshot")
+
+    inputs = [
+        (
+            "background",
+            req.source_asset_key,
+            fetch_workspace_object(req.source_asset_key, workspace),
+        ),
+        (
+            "screenshot",
+            req.overlay_asset_key,
+            fetch_workspace_object(req.overlay_asset_key, workspace),
+        ),
+    ]
+    if req.logo_asset_key:
+        inputs.append(
+            ("logo", req.logo_asset_key, fetch_workspace_object(req.logo_asset_key, workspace))
+        )
+
+    with tempfile.TemporaryDirectory(prefix="peg-compose-") as temp:
+        directory = Path(temp)
+        assets = [
+            _staged_asset(directory, role, source_key, raw)
+            for role, source_key, raw in inputs
+        ]
+        params = dict(req.params)
+        params.update(
+            {
+                "output_width": req.format.width,
+                "output_height": req.format.height,
+            }
+        )
+        result = (
+            Pipeline("peg-compose", preflight=False)
+            .step(
+                PegCompositorProvider(directory),
+                model="app-store-layout-v1",
+                modality=Modality.IMAGE,
+                step_type=StepType.CUSTOM,
+                external_inputs=assets,
+                params=params,
+                metadata={
+                    "operation": "app-store-compose",
+                    "workspace_prefix": workspace_prefix(workspace),
+                },
+            )
+            .run(sink=_sink(workspace), timeout=120, raise_on_failure=True)
+        )
+        run = getattr(result, "run", result)
+        run_id = str(getattr(run, "run_id", ""))
+
+    asset, prov = _collect_run_output(run_id, workspace)
+    if (asset.width, asset.height) != (req.format.width, req.format.height):
+        raise RunFailed(
+            f"composition returned {asset.width}x{asset.height}; expected "
+            f"{req.format.width}x{req.format.height}"
+        )
+    return RunOutcome(run_id=run_id, attempts=1, asset=asset, provenance=prov)
 
 
 def _content_rect(fmt: FormatSpec) -> tuple[int, int, int, int]:
@@ -777,6 +872,8 @@ def _generation_brand_context(
 
 
 def execute(req: RunRequest, workspace: str) -> RunOutcome:
+    if req.operation == "compose":
+        return run_compose(req, workspace)
     prompt, references = _generation_brand_context(req, workspace)
     req = req.model_copy(update={"prompt": prompt})
     if req.operation == "outpaint":

@@ -39,7 +39,7 @@ class RunRequest(BaseModel):
     hit exact dimensions, since no GMI image model honours size parameters.
     """
 
-    operation: Literal["generate", "outpaint"] = "generate"
+    operation: Literal["generate", "outpaint", "compose"] = "generate"
     node_id: str | None = None
     model: str = "seedream-5.0-lite"
     prompt: str = ""
@@ -51,7 +51,11 @@ class RunRequest(BaseModel):
 
     # generate/edit: an upstream B2 asset is sent as the model's image input.
     # outpaint: the same asset is recomposed onto the target format.
+    # compose: this is the generated background; overlay_asset_key is the
+    # authentic app screenshot placed inside the deterministic device frame.
     source_asset_key: str | None = None
+    overlay_asset_key: str | None = None
+    logo_asset_key: str | None = None
     source_b64: str | None = None
     format: FormatSpec | None = None
 
@@ -79,6 +83,7 @@ class ProvenanceOut(BaseModel):
     provider: str | None = None
     model: str | None = None
     created_at: str | None = None
+    input_asset_keys: list[str] = Field(default_factory=list)
 
 
 AssetKind = Literal["style", "logo", "screenshot", "product", "other"]
@@ -129,6 +134,24 @@ class BrandIn(BaseModel):
 
     name: str = ""
     typography: TypographyIn = Field(default_factory=TypographyIn)
+
+
+class WorkflowIn(BaseModel):
+    """The durable editor document.
+
+    Nodes remain deliberately open dictionaries. Their job-specific parameter
+    shapes are owned by the TypeScript catalog and evolve independently of the
+    generation service; this boundary validates the document envelope instead.
+    """
+
+    id: str = Field(min_length=1, max_length=128)
+    name: str = Field(default="Untitled project", max_length=200)
+    nodes: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
+    edges: list[dict[str, Any]] = Field(default_factory=list, max_length=2000)
+    updatedAt: str = ""
+    nodeCount: int = 0
+    thumbnailUrl: str | None = None
+    version: int = 1
 
 
 class RunResponse(BaseModel):

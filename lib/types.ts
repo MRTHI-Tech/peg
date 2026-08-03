@@ -57,13 +57,41 @@ export interface Port {
   isRequired?: boolean;
 }
 
+export interface ParamSelectOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface ParamSelectSection {
+  type: 'section';
+  title: string;
+  options: ParamSelectOption[];
+}
+
 /** A parameter exposed in the right-hand inspector. */
 export type ParamSpec =
-  | {key: string; label: string; kind: 'select'; options: string[]; default: string; tooltip?: string}
+  | {
+      key: string;
+      label: string;
+      kind: 'select';
+      options: Array<string | ParamSelectOption | ParamSelectSection>;
+      default: string;
+      tooltip?: string;
+    }
   | {key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; tooltip?: string}
   | {key: string; label: string; kind: 'number'; min?: number; max?: number; default: number; tooltip?: string}
   | {key: string; label: string; kind: 'toggle'; default: boolean; tooltip?: string}
   | {key: string; label: string; kind: 'text'; default: string; multiline?: boolean; tooltip?: string}
+  | {
+      key: string;
+      label: string;
+      kind: 'brand-asset';
+      default: string;
+      assetKinds?: Array<'logo' | 'screenshot' | 'product' | 'other'>;
+      isOptional?: boolean;
+      tooltip?: string;
+    }
   /**
    * An image the user drops onto a node, held as base64.
    *

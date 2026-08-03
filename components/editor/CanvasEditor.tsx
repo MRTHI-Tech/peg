@@ -10,12 +10,33 @@ import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {NodeCanvas} from '@/components/canvas/NodeCanvas';
 import {estimateNodeHeight} from '@/components/canvas/node-metrics';
 import {defaultParams, getNodeDef} from '@/lib/catalog';
-import {fitViewport, graphBounds, type Viewport} from '@/lib/canvas-geometry';
+import {
+  findOpenNodePosition,
+  fitViewport,
+  graphBounds,
+  screenToWorld,
+  type Viewport,
+} from '@/lib/canvas-geometry';
 import {toRunFormat} from '@/lib/formats';
 import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
 import {useBrand} from '@/lib/use-brand';
 import {useMediaQuery} from '@/lib/use-media-query';
-import {executeRun, toAssetRef, toProvenance} from '@/lib/workflow-service';
+import {
+  executeRun,
+  loadWorkflow,
+  saveWorkflow,
+  toAssetRef,
+  toProvenance,
+} from '@/lib/workflow-service';
+import {
+  readIndexedWorkflowDraft,
+  readWorkflowDraft,
+  recoverWorkflow,
+  workflowFingerprint,
+  workflowTimestamp,
+  writeIndexedWorkflowDraft,
+  writeWorkflowDraft,
+} from '@/lib/workflow-draft';
 import type {Edge, NodeCategory, ParamValue, PegNode, Workflow} from '@/lib/types';
 
 import {EditorTopBar} from './EditorTopBar';
@@ -23,6 +44,16 @@ import {IconRail, type RailSection} from './IconRail';
 import {PalettePanel} from './PalettePanel';
 import {InspectorPanel} from './InspectorPanel';
 import {ZoomToolbar} from './ZoomToolbar';
+
+function newestWorkflow(...candidates: Array<Workflow | null>): Workflow | null {
+  return candidates.reduce<Workflow | null>(
+    (newest, candidate) =>
+      candidate && (!newest || workflowTimestamp(candidate) > workflowTimestamp(newest))
+        ? candidate
+        : newest,
+    null,
+  );
+}
 
 /**
  * Canvas editor frame.
@@ -36,7 +67,15 @@ import {ZoomToolbar} from './ZoomToolbar';
  * All graph state lives here so the inspector and the canvas stay in sync from a
  * single source. Persistence and run execution go through lib/workflow-service.
  */
-export function CanvasEditor({workflow}: {workflow: Workflow}) {
+export function CanvasEditor({
+  workflow,
+  workspaceId,
+  isNew = false,
+}: {
+  workflow: Workflow;
+  workspaceId: string;
+  isNew?: boolean;
+}) {
   const [name, setName] = useState(workflow.name);
   const [nodes, setNodes] = useState<PegNode[]>(workflow.nodes);
   const [edges, setEdges] = useState<Edge[]>(workflow.edges);
@@ -44,6 +83,11 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   const [viewport, setViewport] = useState<Viewport>({x: 0, y: 0, zoom: 0.75});
   const [railSection, setRailSection] = useState<RailSection>('image-models');
   const [isPaletteOpen, setIsPaletteOpen] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<
+    'loading' | 'load-error' | 'unsaved' | 'saving' | 'saved' | 'error'
+  >('loading');
+  const [saveError, setSaveError] = useState<string>();
+  const [persistenceReady, setPersistenceReady] = useState(false);
 
   // Soft gate: the canvas always opens, but generation is withheld until the
   // brand can actually lock it — otherwise output is on-brand by accident.
@@ -55,6 +99,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   // Mirrors of graph state for the run engine. A chained run needs values
   // written by earlier steps of the same chain, which a render-time closure
   // cannot see.
+  const nameRef = useRef(name);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
 
@@ -70,6 +115,262 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
     edgesRef.current = next;
     setEdges(next);
   }, []);
+
+  const updateName = useCallback((next: string) => {
+    nameRef.current = next;
+    setName(next);
+  }, []);
+
+  // ---------------------------------------------------------- persistence
+  const persistenceReadyRef = useRef(false);
+  const localUpdatedAtRef = useRef(workflow.updatedAt);
+  const latestDraftRef = useRef<Workflow | null>(null);
+  const lastSavedFingerprintRef = useRef('');
+  const saveTimerRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const saveAgainRef = useRef(false);
+  const flushSaveRef = useRef<() => void>(() => {});
+  const isNewRef = useRef(isNew);
+  const isMountedRef = useRef(true);
+
+  const buildWorkflow = useCallback(
+    (updatedAt = localUpdatedAtRef.current): Workflow => ({
+      id: workflow.id,
+      name: nameRef.current.trim() || 'Untitled project',
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+      updatedAt,
+      nodeCount: nodesRef.current.length,
+      thumbnailUrl: workflow.thumbnailUrl,
+    }),
+    [workflow.id, workflow.thumbnailUrl],
+  );
+
+  const writeCurrentDraft = useCallback(() => {
+    const updatedAt = new Date().toISOString();
+    localUpdatedAtRef.current = updatedAt;
+    const draft = buildWorkflow(updatedAt);
+    latestDraftRef.current = draft;
+    if (typeof window !== 'undefined') {
+      writeWorkflowDraft(window.localStorage, workspaceId, draft);
+      void writeIndexedWorkflowDraft(workspaceId, draft);
+    }
+    return draft;
+  }, [buildWorkflow, workspaceId]);
+
+  const applyRestoredWorkflow = useCallback((restored: Workflow) => {
+    const recovered = recoverWorkflow(restored);
+    nameRef.current = recovered.name;
+    nodesRef.current = recovered.nodes;
+    edgesRef.current = recovered.edges;
+    localUpdatedAtRef.current = recovered.updatedAt;
+    latestDraftRef.current = recovered;
+    setName(recovered.name);
+    setNodes(recovered.nodes);
+    setEdges(recovered.edges);
+  }, []);
+
+  const flushSave = useCallback(async () => {
+    if (!persistenceReadyRef.current) return;
+    if (saveInFlightRef.current) {
+      saveAgainRef.current = true;
+      return;
+    }
+
+    const snapshot = buildWorkflow();
+    const fingerprint = workflowFingerprint(snapshot);
+    if (fingerprint === lastSavedFingerprintRef.current) {
+      if (isMountedRef.current) setSaveStatus('saved');
+      return;
+    }
+
+    saveInFlightRef.current = true;
+    saveAgainRef.current = false;
+    if (isMountedRef.current) {
+      setSaveStatus('saving');
+      setSaveError(undefined);
+    }
+
+    try {
+      const saved = await saveWorkflow(snapshot);
+      lastSavedFingerprintRef.current = fingerprint;
+
+      // Do not apply the response over live state: edits may have happened while
+      // the request was in flight. Only advance the saved timestamp when this
+      // exact snapshot is still current.
+      const latest = buildWorkflow();
+      if (workflowFingerprint(latest) === fingerprint) {
+        localUpdatedAtRef.current = saved.updatedAt;
+        latestDraftRef.current = {...latest, updatedAt: saved.updatedAt};
+        if (typeof window !== 'undefined') {
+          writeWorkflowDraft(window.localStorage, workspaceId, latestDraftRef.current);
+          void writeIndexedWorkflowDraft(workspaceId, latestDraftRef.current);
+          if (isNewRef.current) {
+            window.history.replaceState(
+              window.history.state,
+              '',
+              `/project/${encodeURIComponent(workflow.id)}`,
+            );
+            isNewRef.current = false;
+          }
+        }
+        if (isMountedRef.current) setSaveStatus('saved');
+      } else {
+        saveAgainRef.current = true;
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setSaveStatus('error');
+        setSaveError((error as Error).message);
+      }
+    } finally {
+      saveInFlightRef.current = false;
+      if (saveAgainRef.current) {
+        saveAgainRef.current = false;
+        window.setTimeout(() => flushSaveRef.current(), 0);
+      }
+    }
+  }, [buildWorkflow, workflow.id, workspaceId]);
+
+  flushSaveRef.current = () => {
+    void flushSave();
+  };
+
+  const forceSave = useCallback(() => {
+    if (saveStatus === 'load-error') {
+      window.location.reload();
+      return;
+    }
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    flushSaveRef.current();
+  }, [saveStatus]);
+
+  // Recover the local safety copy first, then reconcile it with B2. A local
+  // draft wins only when it is newer; otherwise the server copy also refreshes
+  // any expiring asset URLs embedded in completed nodes.
+  useEffect(() => {
+    let cancelled = false;
+    isMountedRef.current = true;
+
+    const local = readWorkflowDraft(window.localStorage, workspaceId, workflow.id);
+    if (local) applyRestoredWorkflow(local);
+
+    const finish = (status: 'unsaved' | 'saved' | 'error', error?: string) => {
+      if (cancelled) return;
+      persistenceReadyRef.current = true;
+      setPersistenceReady(true);
+      setSaveStatus(status);
+      setSaveError(error);
+    };
+
+    void (async () => {
+      const indexed = await readIndexedWorkflowDraft(workspaceId, workflow.id);
+      if (cancelled) return;
+      const browserDraft = newestWorkflow(local, indexed, latestDraftRef.current);
+      if (browserDraft) applyRestoredWorkflow(browserDraft);
+
+      if (isNewRef.current) {
+        finish('unsaved');
+        return;
+      }
+
+      try {
+        const remote = await loadWorkflow(workflow.id);
+        if (cancelled) return;
+
+        // Re-read after the request: the user may have edited while a cold
+        // service was waking up, and that local edit must beat the older B2 copy.
+        const currentLocal = newestWorkflow(
+          readWorkflowDraft(window.localStorage, workspaceId, workflow.id),
+          await readIndexedWorkflowDraft(workspaceId, workflow.id),
+          latestDraftRef.current,
+        );
+        const sameContent =
+          remote &&
+          currentLocal &&
+          workflowFingerprint(recoverWorkflow(remote)) ===
+            workflowFingerprint(recoverWorkflow(currentLocal));
+        const restored =
+          remote &&
+          (!currentLocal || sameContent || workflowTimestamp(remote) >= workflowTimestamp(currentLocal))
+            ? remote
+            : currentLocal ?? remote ?? workflow;
+
+        if (remote) lastSavedFingerprintRef.current = workflowFingerprint(recoverWorkflow(remote));
+        applyRestoredWorkflow(restored);
+        finish(
+          remote &&
+            workflowFingerprint(recoverWorkflow(restored)) === lastSavedFingerprintRef.current
+            ? 'saved'
+            : 'unsaved',
+        );
+      } catch (error) {
+        if (!browserDraft && workflow.nodes.length === 0) {
+          // An unknown id may be a real cloud-only project. Keep the editor
+          // locked instead of treating an outage as an empty canvas and later
+          // overwriting the graph with that placeholder.
+          setSaveStatus('load-error');
+          setSaveError((error as Error).message);
+          return;
+        }
+        // The local copy remains fully usable. The status makes it explicit that
+        // this device is safe but cloud persistence needs retrying.
+        finish('error', (error as Error).message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      isMountedRef.current = false;
+    };
+  }, [applyRestoredWorkflow, workflow, workspaceId]);
+
+  // Every graph edit lands in the browser immediately and is coalesced into a
+  // B2 write after the user pauses. Sequential flushing prevents an older,
+  // slower request from overwriting a newer snapshot.
+  useEffect(() => {
+    if (!persistenceReadyRef.current) return;
+    const current = buildWorkflow();
+    if (workflowFingerprint(current) === lastSavedFingerprintRef.current) {
+      writeWorkflowDraft(window.localStorage, workspaceId, current);
+      void writeIndexedWorkflowDraft(workspaceId, current);
+      setSaveStatus('saved');
+      return;
+    }
+
+    writeCurrentDraft();
+    setSaveStatus(current => (current === 'saving' ? current : 'unsaved'));
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => flushSaveRef.current(), 650);
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, [name, nodes, edges, persistenceReady, buildWorkflow, writeCurrentDraft, workspaceId]);
+
+  // A hard reload can happen inside the debounce window. localStorage is
+  // synchronous, so the current graph is committed before the document exits;
+  // the next mount restores it and resumes the cloud save.
+  useEffect(() => {
+    const preserve = () => {
+      // Never turn the empty loading placeholder into a newer draft. On a cold
+      // first open that would beat the real remote graph on the next reload.
+      if (!persistenceReadyRef.current) return;
+      writeCurrentDraft();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState !== 'hidden') return;
+      preserve();
+      flushSaveRef.current();
+    };
+    window.addEventListener('pagehide', preserve);
+    window.addEventListener('beforeunload', preserve);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', preserve);
+      window.removeEventListener('beforeunload', preserve);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [writeCurrentDraft]);
 
   const canvasHostRef = useRef<HTMLDivElement>(null);
   /** Set once the user pans/zooms, so auto-fit stops fighting them. */
@@ -188,11 +489,29 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
               params: {...n.params, [key]: value},
               // Brief cards and their inspector field are two views of one value.
               text: n.type === 'prompt' && key === 'value' ? String(value) : n.text,
+              // Brand Asset is a zero-cost source node. Selecting an approved
+              // file makes it immediately available to previews and downstream
+              // local composition without pretending it was generated.
+              result:
+                n.type === 'product-asset' && key === 'assetKey'
+                  ? (() => {
+                      const asset = brand.composites.find(item => item.asset_key === value);
+                      return asset
+                        ? {
+                            assetKey: asset.asset_key,
+                            bucket: 'brand-library',
+                            contentType: asset.content_type,
+                            bytes: asset.bytes,
+                            url: asset.url,
+                          }
+                        : undefined;
+                    })()
+                  : n.result,
             }
           : n,
       ),
     );
-  }, [updateNodes]);
+  }, [brand.composites, updateNodes]);
 
   const addNode = useCallback(
     (type: string) => {
@@ -200,7 +519,8 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
       const host = canvasHostRef.current;
       if (!def || !host) return;
       const {width, height} = host.getBoundingClientRect();
-      // Drop the new node at the center of the current view.
+      // Prefer the center of the current view, then expand into the nearest
+      // visible open slot so a new node never hides under the previous one.
       const x = (width / 2 - viewport.x) / viewport.zoom - 120;
       const y = (height / 2 - viewport.y) / viewport.zoom - 60;
       const id = `n-${crypto.randomUUID().slice(0, 8)}`;
@@ -221,7 +541,27 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         outputs: def.outputs,
         text: def.type === 'prompt' ? '' : undefined,
       };
-      updateNodes(current => [...current, node]);
+      const topLeft = screenToWorld(0, 0, viewport);
+      const bottomRight = screenToWorld(width, height, viewport);
+      updateNodes(current => {
+        const position = findOpenNodePosition({
+          desired: {x, y},
+          size: {width: node.width, height: estimateNodeHeight(node)},
+          occupied: current.map(existing => ({
+            x: existing.x,
+            y: existing.y,
+            width: existing.width,
+            height: estimateNodeHeight(existing),
+          })),
+          visibleBounds: {
+            minX: topLeft.x,
+            minY: topLeft.y,
+            maxX: bottomRight.x,
+            maxY: bottomRight.y,
+          },
+        });
+        return [...current, {...node, ...position}];
+      });
       setSelectedIds([id]);
     },
     [updateNodes, viewport],
@@ -279,8 +619,11 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
 
       const formatNode = sourceOf(node, 'format');
       const styleNode = sourceOf(node, 'style');
-      const imageNode =
-        sourceOf(node, 'image') ?? sourceOf(node, 'base') ?? sourceOf(node, 'asset');
+      const imageNode = sourceOf(node, 'image') ?? sourceOf(node, 'asset');
+      const baseNode = sourceOf(node, 'base');
+      const overlayNode = sourceOf(node, 'overlay');
+      const assetKey = (source: PegNode | undefined) =>
+        source?.result?.assetKey || String(source?.params.assetKey ?? '') || undefined;
 
       const upstreamPrompt = sourceOf(node, 'prompt');
       // A Reference node carries the image on its style output. The model wants
@@ -294,7 +637,9 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         prompt: upstreamPrompt ? resolvePrompt(upstreamPrompt) : resolvePrompt(node),
         styleNotes: String(styleNode?.params.notes ?? '').trim(),
         format: formatNode ? toRunFormat(formatNode.params) : undefined,
-        sourceAssetKey: imageNode?.result?.assetKey,
+        sourceAssetKey: assetKey(imageNode ?? baseNode),
+        baseAssetKey: assetKey(baseNode),
+        overlayAssetKey: assetKey(overlayNode),
         referenceB64,
       };
     },
@@ -308,7 +653,15 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   const runNode = useCallback(
     async (node: PegNode): Promise<boolean> => {
       if (!isExecutableNode(node)) return false;
-      const {prompt, styleNotes, format, sourceAssetKey, referenceB64} = resolveInputs(node);
+      const {
+        prompt,
+        styleNotes,
+        format,
+        sourceAssetKey,
+        baseAssetKey,
+        overlayAssetKey,
+        referenceB64,
+      } = resolveInputs(node);
       const directedPrompt = styleNotes
         ? `${prompt}\n\nBrand look to preserve: ${styleNotes}`.trim()
         : prompt;
@@ -316,12 +669,20 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
       // Outpaint is the explicit Extend Canvas job, not a generic property of
       // every image model that happens to have image and format inputs.
       const isOutpaint = node.type === 'genfill' && Boolean(sourceAssetKey && format);
+      const isCompose = node.type === 'app-store-compose';
 
       // Fail here rather than spending a call the API will reject anyway.
-      if (!directedPrompt && !isOutpaint) {
+      if (!directedPrompt && !isOutpaint && !isCompose) {
         patchNode(node.id, {
           status: 'error',
           error: 'No prompt. Connect a Brief node, or type one into this node.',
+        });
+        return false;
+      }
+      if (isCompose && (!baseAssetKey || !overlayAssetKey)) {
+        patchNode(node.id, {
+          status: 'error',
+          error: 'Connect a generated background and an uploaded app screenshot.',
         });
         return false;
       }
@@ -337,10 +698,35 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         if (node.params.numberOfImages != null) {
           params.number_of_images = Number(node.params.numberOfImages);
         }
+        if (isCompose) {
+          for (const key of [
+            'layout',
+            'frameStyle',
+            'deviceScale',
+            'deviceOffsetX',
+            'deviceOffsetY',
+            'shadow',
+            'headline',
+            'subheadline',
+            'textColor',
+          ]) {
+            const value = node.params[key];
+            if (value != null) params[key] = value;
+          }
+        }
+
+        const composeFormat = isCompose
+          ? format ??
+            toRunFormat({
+              preset: node.params.outputSize,
+              safeArea: 'Upper third',
+              focalPoint: 'Center',
+            })
+          : undefined;
 
         const result = await executeRun(
           {
-            operation: isOutpaint ? 'outpaint' : 'generate',
+            operation: isCompose ? 'compose' : isOutpaint ? 'outpaint' : 'generate',
             node_id: node.id,
             // Reference conditioning is unproven, so the node exposes a model
             // picker and it wins over the catalog default.
@@ -350,8 +736,10 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
             params,
             // Every image-input job receives the upstream B2 object. Outpaint
             // uses it to build a canvas/mask; edit models receive it as `image`.
-            source_asset_key: sourceAssetKey,
-            format: isOutpaint ? format : undefined,
+            source_asset_key: isCompose ? baseAssetKey : sourceAssetKey,
+            overlay_asset_key: isCompose ? overlayAssetKey : undefined,
+            logo_asset_key: isCompose ? String(node.params.logoAssetKey ?? '') || undefined : undefined,
+            format: isCompose ? composeFormat : isOutpaint ? format : undefined,
             // Outpaint already has an image; a reference would fight it.
             image_b64: isOutpaint ? undefined : referenceB64,
           },
@@ -425,6 +813,12 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   // ------------------------------------------------------------- shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        forceSave();
+        return;
+      }
+
       const target = e.target as HTMLElement | null;
       // Don't hijack keys while the user is typing in a field.
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
@@ -440,11 +834,13 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteSelection, fitToViewManual]);
+  }, [deleteSelection, fitToViewManual, forceSave]);
 
   const totalCost = selectedNodes
     .filter(isExecutableNode)
     .reduce((sum, n) => sum + n.cost, 0);
+
+  const isCanvasLoading = saveStatus === 'loading' || saveStatus === 'load-error';
 
   return (
     <AppShell
@@ -454,43 +850,49 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
       topNav={
         <EditorTopBar
           name={name}
-          onNameChange={setName}
+          onNameChange={updateName}
           nodeCount={nodes.length}
           isRunning={isRunning}
           runnableCount={isBrandReady ? nodes.filter(isExecutableNode).length : 0}
           brandName={brand.name}
           isBrandReady={isBrandReady}
+          saveStatus={saveStatus}
+          saveError={saveError}
+          onRetrySave={forceSave}
           onRunAll={runAll}
         />
       }>
       <Layout
         start={
-          <HStack gap={0} style={{blockSize: '100%'}}>
-            <IconRail
-              active={railSection}
-              onSelect={section => {
-                setRailSection(section);
-                setIsPaletteOpen(true);
-              }}
-              isPaletteOpen={isPaletteOpen}
-              onTogglePalette={() => setIsPaletteOpen(open => !open)}
-            />
-            {isPaletteOpen && (
-              <PalettePanel
-                section={railSection}
-                onAddNode={addNode}
-                onCategoryChange={category => setRailSection(category as RailSection)}
+          isCanvasLoading ? undefined : (
+            <HStack gap={0} style={{blockSize: '100%'}}>
+              <IconRail
+                active={railSection}
+                onSelect={section => {
+                  setRailSection(section);
+                  setIsPaletteOpen(true);
+                }}
+                isPaletteOpen={isPaletteOpen}
+                onTogglePalette={() => setIsPaletteOpen(open => !open)}
               />
-            )}
-          </HStack>
+              {isPaletteOpen && (
+                <PalettePanel
+                  section={railSection}
+                  onAddNode={addNode}
+                  onCategoryChange={category => setRailSection(category as RailSection)}
+                />
+              )}
+            </HStack>
+          )
         }
         end={
-          isVeryNarrow && selectedNodes.length === 0 ? undefined : (
+          isCanvasLoading || (isVeryNarrow && selectedNodes.length === 0) ? undefined : (
             <InspectorPanel
               nodes={selectedNodes}
               totalCost={totalCost}
               isRunning={isRunning}
               isBrandReady={isBrandReady}
+              brandAssets={brand.composites}
               onRun={runSelected}
               onParamChange={updateParam}
               onDelete={deleteSelection}
@@ -498,7 +900,25 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           )
         }>
         <div ref={canvasHostRef} style={{position: 'relative', blockSize: '100%', inlineSize: '100%'}}>
-          {nodes.length === 0 && (
+          {isCanvasLoading ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'grid',
+                placeItems: 'center',
+              }}>
+              <EmptyState
+                title={saveStatus === 'load-error' ? "Couldn't load project" : 'Loading project'}
+                description={
+                  saveStatus === 'load-error'
+                    ? 'Storage could not be reached. Retry without editing so the saved graph stays protected.'
+                    : 'Restoring the latest saved canvas and its outputs.'
+                }
+                isCompact
+              />
+            </div>
+          ) : nodes.length === 0 ? (
             // A blank canvas is otherwise just an empty grid with no affordance.
             <div
               style={{
@@ -515,28 +935,32 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
                 isCompact
               />
             </div>
+          ) : null}
+          {!isCanvasLoading && (
+            <>
+              <NodeCanvas
+                nodes={nodes}
+                edges={edges}
+                selectedIds={selectedIds}
+                viewport={viewport}
+                onViewportChange={handleViewportChange}
+                onSelectionChange={setSelectedIds}
+                onNodeMove={moveNode}
+                onNodeClear={clearNode}
+                onNodeRename={renameNode}
+                onNodeLockToggle={toggleNodeLock}
+                onNodeDelete={deleteNode}
+                onConnect={connect}
+                onEdgeDelete={deleteEdge}
+                onRunNode={runNode}
+              />
+              <ZoomToolbar
+                viewport={viewport}
+                onViewportChange={handleViewportChange}
+                onFit={fitToViewManual}
+              />
+            </>
           )}
-          <NodeCanvas
-            nodes={nodes}
-            edges={edges}
-            selectedIds={selectedIds}
-            viewport={viewport}
-            onViewportChange={handleViewportChange}
-            onSelectionChange={setSelectedIds}
-            onNodeMove={moveNode}
-            onNodeClear={clearNode}
-            onNodeRename={renameNode}
-            onNodeLockToggle={toggleNodeLock}
-            onNodeDelete={deleteNode}
-            onConnect={connect}
-            onEdgeDelete={deleteEdge}
-            onRunNode={runNode}
-          />
-          <ZoomToolbar
-            viewport={viewport}
-            onViewportChange={handleViewportChange}
-            onFit={fitToViewManual}
-          />
         </div>
       </Layout>
     </AppShell>

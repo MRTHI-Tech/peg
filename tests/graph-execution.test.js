@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   executeInDependencyOrder,
+  isExecutableNode,
   planDependencyOrder,
 } = require('../lib/graph-execution.ts');
 
@@ -94,4 +95,12 @@ test('cycles are rejected without spending a run', async () => {
     ['a', 'dependency-cycle'],
     ['b', 'dependency-cycle'],
   ]);
+});
+
+test('PEG local renderers are executable alongside GMI model nodes', () => {
+  assert.equal(
+    isExecutableNode({provider: 'peg-local', model: 'app-store-layout-v1'}),
+    true,
+  );
+  assert.equal(isExecutableNode({provider: undefined, model: undefined}), false);
 });

@@ -130,7 +130,7 @@ const HERO_NODES: PegNode[] = [
     x: 720,
     y: 40,
     width: 220,
-    params: {preset: 'Desktop hero', safeArea: 'Left third', focalPoint: 'Right'},
+    params: {preset: '1920x600', safeArea: 'Left third', focalPoint: 'Right'},
   }),
   node({
     id: 'n-compose-desktop',
@@ -153,7 +153,7 @@ const HERO_NODES: PegNode[] = [
     x: 720,
     y: 400,
     width: 220,
-    params: {preset: 'Mobile hero', safeArea: 'Upper third', focalPoint: 'Center'},
+    params: {preset: 'instagram-portrait', safeArea: 'Upper third', focalPoint: 'Center'},
   }),
   node({
     id: 'n-compose-mobile',
@@ -176,7 +176,7 @@ const HERO_NODES: PegNode[] = [
     x: 720,
     y: 840,
     width: 220,
-    params: {preset: 'Square social', safeArea: 'Upper third', focalPoint: 'Center'},
+    params: {preset: 'instagram-post', safeArea: 'Upper third', focalPoint: 'Center'},
   }),
   node({
     id: 'n-compose-square',
@@ -312,9 +312,9 @@ export const WORKFLOWS: Workflow[] = [
 export const NEW_WORKFLOW_ID = 'new';
 
 /** A blank canvas. Everything is added from the palette. */
-export function createEmptyWorkflow(): Workflow {
+export function createEmptyWorkflow(id = NEW_WORKFLOW_ID): Workflow {
   return {
-    id: NEW_WORKFLOW_ID,
+    id,
     name: 'Untitled project',
     nodes: [],
     edges: [],

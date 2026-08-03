@@ -10,7 +10,7 @@ import {Icon} from '@astryxdesign/core/Icon';
 import {Button} from '@astryxdesign/core/Button';
 import {Divider} from '@astryxdesign/core/Divider';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
-import {Selector} from '@astryxdesign/core/Selector';
+import {Selector, SelectorOption} from '@astryxdesign/core/Selector';
 import {Slider} from '@astryxdesign/core/Slider';
 import {NumberInput} from '@astryxdesign/core/NumberInput';
 import {Switch} from '@astryxdesign/core/Switch';
@@ -20,16 +20,18 @@ import {FileInput} from '@astryxdesign/core/FileInput';
 
 import {getNodeDef} from '@/lib/catalog';
 import {isExecutableNode} from '@/lib/graph-execution';
-import type {ParamSpec, ParamValue, PegNode} from '@/lib/types';
+import type {BrandAsset} from '@/lib/brand';
+import type {ParamSelectOption, ParamSpec, ParamValue, PegNode} from '@/lib/types';
 
 /** A reference travels inside the run request, so it stays well under the brand-asset cap. */
-const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
+const MAX_REFERENCE_BYTES = 7 * 1024 * 1024;
 
 interface Props {
   nodes: PegNode[];
   totalCost: number;
   isRunning: boolean;
   isBrandReady: boolean;
+  brandAssets: BrandAsset[];
   onRun: () => void;
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
   onDelete: () => void;
@@ -44,6 +46,7 @@ export function InspectorPanel({
   totalCost,
   isRunning,
   isBrandReady,
+  brandAssets,
   onRun,
   onParamChange,
   onDelete,
@@ -62,7 +65,11 @@ export function InspectorPanel({
               isCompact
             />
           ) : single ? (
-            <SingleNodeFields node={single} onParamChange={onParamChange} />
+            <SingleNodeFields
+              node={single}
+              brandAssets={brandAssets}
+              onParamChange={onParamChange}
+            />
           ) : (
             <VStack gap={2}>
               <Text type="label">{nodes.length} nodes selected</Text>
@@ -137,9 +144,11 @@ export function InspectorPanel({
 
 function SingleNodeFields({
   node,
+  brandAssets,
   onParamChange,
 }: {
   node: PegNode;
+  brandAssets: BrandAsset[];
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
 }) {
   const def = getNodeDef(node.type);
@@ -176,6 +185,7 @@ function SingleNodeFields({
             key={spec.key}
             spec={spec}
             value={node.params[spec.key]}
+            brandAssets={brandAssets}
             onChange={value => onParamChange(node.id, spec.key, value)}
           />
         ))}
@@ -257,10 +267,12 @@ function SingleNodeFields({
 function ParamField({
   spec,
   value,
+  brandAssets,
   onChange,
 }: {
   spec: ParamSpec;
   value: ParamValue | undefined;
+  brandAssets: BrandAsset[];
   onChange: (value: ParamValue) => void;
 }) {
   switch (spec.kind) {
@@ -273,6 +285,15 @@ function ParamField({
           options={spec.options}
           value={String(value ?? spec.default)}
           onChange={onChange}
+          renderOption={option => {
+            const configured = findSelectOption(spec.options, option.value);
+            return (
+              <SelectorOption
+                label={option.label ?? option.value}
+                description={configured?.description}
+              />
+            );
+          }}
           width="100%"
         />
       );
@@ -310,6 +331,30 @@ function ParamField({
           onChange={onChange}
         />
       );
+    case 'brand-asset': {
+      const matching = brandAssets.filter(
+        asset => !spec.assetKinds || spec.assetKinds.some(kind => kind === asset.kind),
+      );
+      const emptyLabel = spec.isOptional ? 'No logo' : 'Choose an uploaded asset';
+      return (
+        <Selector
+          label={spec.label}
+          labelTooltip={spec.tooltip}
+          size="sm"
+          options={[
+            {value: '', label: emptyLabel},
+            ...matching.map(asset => ({
+              value: asset.asset_key,
+              label: asset.filename,
+              description: asset.kind === 'screenshot' ? 'App screenshot' : asset.kind,
+            })),
+          ]}
+          value={String(value ?? spec.default)}
+          onChange={onChange}
+          width="100%"
+        />
+      );
+    }
     case 'image':
       return (
         <ReferenceImageInput
@@ -339,6 +384,22 @@ function ParamField({
         />
       );
   }
+}
+
+function findSelectOption(
+  options: Extract<ParamSpec, {kind: 'select'}>['options'],
+  value: string,
+): ParamSelectOption | undefined {
+  for (const option of options) {
+    if (typeof option === 'string') continue;
+    if ('type' in option && option.type === 'section') {
+      const match = option.options.find(item => item.value === value);
+      if (match) return match;
+    } else if ('value' in option && option.value === value) {
+      return option;
+    }
+  }
+  return undefined;
 }
 
 /**

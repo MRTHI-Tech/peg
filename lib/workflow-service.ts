@@ -1,9 +1,9 @@
 /**
  * The single boundary between the UI and the backend.
  *
- * Reads (workflows, gallery) still resolve from fixtures in `mock-data.ts`.
- * Writes — actual generation — now go through the Next.js route handlers to the
- * Python Genblaze service, which is the only thing that can run the SDK.
+ * Workflow reads/writes and generation both go through Next.js route handlers;
+ * the browser never holds storage or provider credentials. Fixtures remain only
+ * as starter templates and fallbacks for their known ids.
  *
  * Generation is submit-then-poll: a run takes minutes, so `startRun` returns an
  * id immediately and `pollRun` reports progress until it settles.
@@ -17,10 +17,41 @@ export function listWorkflows(): Workflow[] {
 }
 
 export function getWorkflow(id: string): Workflow | undefined {
-  // `new` is a blank canvas rather than a stored document — nothing is persisted
-  // until a run writes to B2, so a fresh project needs no record to exist first.
   if (id === NEW_WORKFLOW_ID) return createEmptyWorkflow();
   return WORKFLOWS.find(w => w.id === id) ?? (id === HERO_WORKFLOW.id ? HERO_WORKFLOW : undefined);
+}
+
+export interface WorkflowList {
+  workflows: Workflow[];
+  reachable: boolean;
+}
+
+export async function loadWorkflow(id: string): Promise<Workflow | null> {
+  const response = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {cache: 'no-store'});
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function saveWorkflow(workflow: Workflow): Promise<Workflow> {
+  const response = await fetch(`/api/workflows/${encodeURIComponent(workflow.id)}`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(workflow),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function listSavedWorkflows(): Promise<WorkflowList> {
+  try {
+    const response = await fetch('/api/workflows', {cache: 'no-store'});
+    if (!response.ok) return {workflows: [], reachable: false};
+    const body = (await response.json()) as {workflows?: Workflow[]};
+    return {workflows: body.workflows ?? [], reachable: true};
+  } catch {
+    return {workflows: [], reachable: false};
+  }
 }
 
 // ------------------------------------------------------------------- running
@@ -36,7 +67,7 @@ export interface RunFormat {
 }
 
 export interface RunRequest {
-  operation?: 'generate' | 'outpaint';
+  operation?: 'generate' | 'outpaint' | 'compose';
   node_id?: string;
   model: string;
   prompt?: string;
@@ -45,6 +76,10 @@ export interface RunRequest {
   image_b64?: string;
   /** outpaint: recompose an asset already in storage onto `format`. */
   source_asset_key?: string;
+  /** compose: authentic screenshot placed inside the device frame. */
+  overlay_asset_key?: string;
+  /** compose: optional approved logo from the workspace brand library. */
+  logo_asset_key?: string;
   format?: RunFormat;
 }
 
@@ -72,6 +107,7 @@ export interface RunResult {
     provider?: string | null;
     model?: string | null;
     created_at?: string | null;
+    input_asset_keys?: string[];
   } | null;
 }
 
@@ -150,7 +186,7 @@ export function toProvenance(result: RunResult, nodeId: string): Provenance | un
     runId: p.run_id,
     nodeId,
     producedBy: {provider: p.provider ?? 'gmicloud-image', model: p.model ?? ''},
-    inputAssetKeys: [],
+    inputAssetKeys: p.input_asset_keys ?? [],
     params: {},
     createdAt: p.created_at ?? new Date().toISOString(),
     manifestKey: p.manifest_key ?? undefined,

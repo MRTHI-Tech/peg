@@ -20,18 +20,31 @@ export function WorkflowCard({workflow}: {workflow: Workflow}) {
       elevation="low">
       <VStack gap={0}>
         <AspectRatio ratio={16 / 10} fit="cover">
-          {/* eslint-disable-next-line @next/next/no-img-element -- data-URI placeholder, not a remote asset */}
-          <img
-            src={workflow.thumbnailUrl}
-            alt=""
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              borderStartStartRadius: 'var(--radius-container)',
-              borderStartEndRadius: 'var(--radius-container)',
-            }}
-          />
+          {workflow.thumbnailUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- may be a presigned B2 URL
+            <img
+              src={workflow.thumbnailUrl}
+              alt=""
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                borderStartStartRadius: 'var(--radius-container)',
+                borderStartEndRadius: 'var(--radius-container)',
+              }}
+            />
+          ) : (
+            <VStack
+              align="center"
+              justify="center"
+              style={{
+                inlineSize: '100%',
+                blockSize: '100%',
+                backgroundColor: 'var(--color-background-card)',
+              }}>
+              <Icon icon={WorkflowIcon} size="lg" color="disabled" />
+            </VStack>
+          )}
         </AspectRatio>
         <VStack gap={1} padding={3}>
           <Text type="body" weight="medium" maxLines={1}>

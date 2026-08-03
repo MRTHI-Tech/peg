@@ -12,6 +12,7 @@ import {AccountControls} from '@/components/chrome/AccountControls';
 import {CreditsPill} from '@/components/chrome/CreditsPill';
 import {GalleryEmptyState} from '@/components/gallery/GalleryEmptyState';
 import {GenerationCard} from '@/components/gallery/GenerationCard';
+import {SavedWorkflowGallery} from '@/components/gallery/SavedWorkflowGallery';
 import {TemplateCard} from '@/components/gallery/TemplateCard';
 import {listGenerations} from '@/lib/generations';
 import {requireOrganization} from '@/lib/workspace';
@@ -76,6 +77,13 @@ export default async function GalleryPage() {
         </VStack>
 
         <BrandGateBanner />
+
+        <VStack gap={3}>
+          <Heading level={2}>Saved projects</Heading>
+          <SavedWorkflowGallery />
+        </VStack>
+
+        <Divider />
 
         <VStack gap={3}>
           <Heading level={2}>Start from a template</Heading>
