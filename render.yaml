@@ -77,3 +77,11 @@ services:
         sync: false
       - key: CLERK_SECRET_KEY
         sync: false
+      # Keep sign-in on the app's own pages rather than Clerk's hosted ones.
+      # Read server-side by auth.protect(), so the ClerkProvider props are not
+      # enough on their own — without these a deployed build sends users to
+      # accounts.dev instead of the Astryx split page.
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        value: /sign-up
