@@ -63,7 +63,16 @@ export type ParamSpec =
   | {key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; tooltip?: string}
   | {key: string; label: string; kind: 'number'; min?: number; max?: number; default: number; tooltip?: string}
   | {key: string; label: string; kind: 'toggle'; default: boolean; tooltip?: string}
-  | {key: string; label: string; kind: 'text'; default: string; multiline?: boolean; tooltip?: string};
+  | {key: string; label: string; kind: 'text'; default: string; multiline?: boolean; tooltip?: string}
+  /**
+   * An image the user drops onto a node, held as base64.
+   *
+   * Deliberately not a B2 upload: this is a campaign reference — the Pinterest
+   * pin you want recreated in your own brand — not a durable brand asset. It
+   * lives as long as the graph does and goes straight to the model as
+   * `image_b64`. Brand assets are the ones worth a bucket key.
+   */
+  | {key: string; label: string; kind: 'image'; default: string; tooltip?: string};
 
 /**
  * A catalog entry: the definition of a node type, independent of any instance

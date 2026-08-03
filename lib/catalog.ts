@@ -105,6 +105,26 @@ const NUMBER_OF_IMAGES = {
 
 const GEN_TAIL: ParamSpec[] = [NEGATIVE_PROMPT, SEED, RANDOM_SEED, NUMBER_OF_IMAGES];
 
+/**
+ * Candidates for turning a reference image into a plate.
+ *
+ * Ordered by how likely they are to work, not by capability. The Gemini models
+ * lead because a sibling (`gemini-3.1-flash-lite-image`) is the one model that
+ * worked first try through this provider, and they are natively multimodal.
+ * `gpt-image-2-edit` is registered and probes healthy, and takes an input image
+ * by design. `flux-kontext-pro` was the original pick and is untried.
+ *
+ * Reference conditioning is the open question in AGENTS.md: `reve-remix` is dead
+ * upstream and `seededit-3-0-i2i` is entitlement-gated, so the models this was
+ * meant to run on are gone. Exposed as a param so it can be tested in the app.
+ */
+export const REFERENCE_MODELS = [
+  'gemini-3.1-flash-image',
+  'gemini-3.1-flash-lite-image',
+  'gpt-image-2-edit',
+  'flux-kontext-pro',
+] as const;
+
 export const CATALOG: NodeDef[] = [
   // =========================================================== brand constraints
   {
@@ -131,6 +151,35 @@ export const CATALOG: NodeDef[] = [
       },
     ],
     description: 'Reference images that lock the brand look for every downstream generation.',
+  },
+  {
+    type: 'reference',
+    title: 'Reference',
+    category: 'brand',
+    cost: 0,
+    inputs: [],
+    outputs: [{id: 'style', name: 'Style', type: 'style'}],
+    params: [
+      {
+        key: 'image',
+        label: 'Reference image',
+        kind: 'image',
+        default: '',
+        tooltip:
+          'The look you want recreated — a competitor hero, a Pinterest pin, an old campaign. Sent to the model as a reference, never published.',
+      },
+      {
+        key: 'notes',
+        label: 'What to take from it',
+        kind: 'text',
+        multiline: true,
+        default: '',
+        tooltip:
+          'Optional. Narrow what gets borrowed — "the lighting and layout, not the colours" — since the palette comes from your own brand kit.',
+      },
+    ],
+    description:
+      'A campaign reference to recreate in your brand. Feeds the style input of any generator. Held with the graph, not stored in the brand library.',
   },
   {
     type: 'product-asset',
@@ -220,11 +269,23 @@ export const CATALOG: NodeDef[] = [
     title: 'Match Brand Look',
     category: 'image-models',
     provider: 'gmicloud-image',
-    model: 'flux-kontext-pro',
+    model: REFERENCE_MODELS[0],
     cost: 0.04,
     inputs: [promptIn(), styleIn(true), {id: 'format', name: 'Format', type: 'format', isRequired: false}],
     outputs: [imageOut()],
-    params: [RESOLUTION, ...GEN_TAIL],
+    params: [
+      {
+        key: 'model',
+        label: 'Model',
+        kind: 'select',
+        options: [...REFERENCE_MODELS],
+        default: REFERENCE_MODELS[0],
+        tooltip:
+          'Reference conditioning is unproven — none of these has been verified for it. Switch here rather than waiting on a deploy.',
+      },
+      RESOLUTION,
+      ...GEN_TAIL,
+    ],
     description: 'Reference-locked generation. The core node: holds the brand look across new compositions.',
   },
   {

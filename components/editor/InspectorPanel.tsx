@@ -1,5 +1,6 @@
 'use client';
 
+import {useState} from 'react';
 import {Play, ShieldAlert, ShieldCheck, Sparkles, Trash2} from 'lucide-react';
 
 import {LayoutPanel} from '@astryxdesign/core/Layout';
@@ -15,10 +16,14 @@ import {NumberInput} from '@astryxdesign/core/NumberInput';
 import {Switch} from '@astryxdesign/core/Switch';
 import {TextArea} from '@astryxdesign/core/TextArea';
 import {TextInput} from '@astryxdesign/core/TextInput';
+import {FileInput} from '@astryxdesign/core/FileInput';
 
 import {getNodeDef} from '@/lib/catalog';
 import {isExecutableNode} from '@/lib/graph-execution';
 import type {ParamSpec, ParamValue, PegNode} from '@/lib/types';
+
+/** A reference travels inside the run request, so it stays well under the brand-asset cap. */
+const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 
 interface Props {
   nodes: PegNode[];
@@ -305,6 +310,15 @@ function ParamField({
           onChange={onChange}
         />
       );
+    case 'image':
+      return (
+        <ReferenceImageInput
+          label={spec.label}
+          tooltip={spec.tooltip}
+          value={String(value ?? '')}
+          onChange={onChange}
+        />
+      );
     case 'text':
       return spec.multiline ? (
         <TextArea
@@ -325,4 +339,77 @@ function ParamField({
         />
       );
   }
+}
+
+/**
+ * A reference image, held as a data URI on the node.
+ *
+ * Not uploaded to B2: a campaign reference is disposable — the pin you want
+ * recreated this week — and the brand library is for assets that outlive a
+ * campaign. It rides along with the run as `image_b64` and is never published.
+ */
+function ReferenceImageInput({
+  label,
+  tooltip,
+  value,
+  onChange,
+}: {
+  label: string;
+  tooltip?: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const read = async (files: File | File[] | null) => {
+    const file = Array.isArray(files) ? files[0] : files;
+    if (!file) return;
+    if (file.size > MAX_REFERENCE_BYTES) {
+      setError(`${(file.size / 1024 / 1024).toFixed(1)}MB — the limit is ${MAX_REFERENCE_BYTES / 1024 / 1024}MB`);
+      return;
+    }
+    setError(null);
+    const dataUri = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('could not read that file'));
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsDataURL(file);
+    });
+    onChange(dataUri);
+  };
+
+  return (
+    <VStack gap={1.5}>
+      <FileInput
+        label={label}
+        labelTooltip={tooltip}
+        mode="dropzone"
+        accept="image/*"
+        maxSize={MAX_REFERENCE_BYTES}
+        value={null}
+        placeholder={value ? 'Replace reference' : 'Drop a reference image'}
+        status={error ? {type: 'error', message: error} : undefined}
+        onChange={() => {}}
+        changeAction={read}
+        width="100%"
+      />
+      {value && (
+        <VStack gap={1}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- local data URI */}
+          <img
+            src={value}
+            alt="Reference"
+            style={{
+              inlineSize: '100%',
+              aspectRatio: '16 / 10',
+              objectFit: 'cover',
+              borderRadius: 'var(--radius-inner)',
+              display: 'block',
+            }}
+          />
+          <Button label="Remove reference" variant="ghost" size="sm" onClick={() => onChange('')} />
+        </VStack>
+      )}
+    </VStack>
+  );
 }

@@ -247,11 +247,19 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
         sourceOf(node, 'image') ?? sourceOf(node, 'base') ?? sourceOf(node, 'asset');
 
       const upstreamPrompt = sourceOf(node, 'prompt');
+      // A Reference node carries the image on its style output. The model wants
+      // raw base64, so the `data:<mime>;base64,` prefix comes off here.
+      const referenceUri = String(styleNode?.params.image ?? '');
+      const referenceB64 = referenceUri.includes(',')
+        ? referenceUri.slice(referenceUri.indexOf(',') + 1)
+        : undefined;
+
       return {
         prompt: upstreamPrompt ? resolvePrompt(upstreamPrompt) : resolvePrompt(node),
         styleNotes: String(styleNode?.params.notes ?? '').trim(),
         format: formatNode ? toRunFormat(formatNode.params) : undefined,
         sourceAssetKey: imageNode?.result?.assetKey,
+        referenceB64,
       };
     },
     [],
@@ -264,7 +272,7 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
   const runNode = useCallback(
     async (node: PegNode): Promise<boolean> => {
       if (!isExecutableNode(node)) return false;
-      const {prompt, styleNotes, format, sourceAssetKey} = resolveInputs(node);
+      const {prompt, styleNotes, format, sourceAssetKey, referenceB64} = resolveInputs(node);
       const directedPrompt = styleNotes
         ? `${prompt}\n\nBrand look to preserve: ${styleNotes}`.trim()
         : prompt;
@@ -298,12 +306,16 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
           {
             operation: isOutpaint ? 'outpaint' : 'generate',
             node_id: node.id,
-            model: node.model,
+            // Reference conditioning is unproven, so the node exposes a model
+            // picker and it wins over the catalog default.
+            model: String(node.params.model ?? '') || node.model,
             prompt: directedPrompt,
             negative_prompt: String(node.params.negativePrompt ?? '') || undefined,
             params,
             source_asset_key: isOutpaint ? sourceAssetKey : undefined,
             format: isOutpaint ? format : undefined,
+            // Outpaint already has an image; a reference would fight it.
+            image_b64: isOutpaint ? undefined : referenceB64,
           },
           {
             onProgress: r =>
