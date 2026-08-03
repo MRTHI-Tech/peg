@@ -286,7 +286,8 @@ export const CATALOG: NodeDef[] = [
       RESOLUTION,
       ...GEN_TAIL,
     ],
-    description: 'Reference-locked generation. The core node: holds the brand look across new compositions.',
+    description:
+      'Reference-locked generation. Automatically inherits style references and approved logos from the workspace Brand Kit.',
   },
   {
     type: 'fibo-blend',

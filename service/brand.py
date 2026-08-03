@@ -5,9 +5,9 @@ already the asset library, and a brand is one small document per workspace.
 
 Two deliberate separations, because collapsing them makes output worse:
 
-- **Style references vs logos.** A style reference teaches the model palette,
-  lighting, and materials. A logo fed in the same way produces garbled logo-ish
-  shapes. Logos exist to be *composited* on top, never to condition generation.
+- **Style references vs logos.** A style reference teaches palette, lighting,
+  and materials. A logo is sent only as a separately labelled identity reference,
+  then the approved original is composited for any pixel-exact hero placement.
 - **Typography is metadata, not a generation input.** No image model reproduces
   a specific typeface. Fonts are captured for the live-text layer that sits over
   the plate; they are never sent to a model.
@@ -57,8 +57,9 @@ class BrandError(RuntimeError):
     pass
 
 
-# What a composited asset is, which decides how it gets placed rather than
-# whether it is generated — nothing in this lane is ever generated.
+# What a composited asset is, which decides how it gets placed. A logo may also
+# be shown to Gemini as identity artwork, but nothing in this lane is generated
+# as the approved final asset.
 COMPOSITE_KINDS = ("logo", "screenshot", "product", "other")
 STYLE_KIND = "style"
 

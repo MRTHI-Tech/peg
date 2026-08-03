@@ -16,6 +16,7 @@ Everything here encodes something learned the hard way against the live API:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import boto3
+import cairosvg
 from dotenv import load_dotenv
 from PIL import Image, ImageFilter
 
@@ -55,6 +57,9 @@ def workspace_prefix(workspace: str) -> str:
 MAX_ATTEMPTS = 3
 PRESIGN_TTL = 60 * 60 * 12
 OUTPAINT_MODEL = "bria-genfill"
+MAX_STYLE_REFERENCES = 3
+MAX_LOGO_REFERENCES = 2
+REFERENCE_EDGE = 1024
 
 # Mask feathering, in pixels, so the outpaint boundary is not a hard seam.
 FEATHER_SIGMA = 16
@@ -81,6 +86,26 @@ class RunOutcome:
     attempts: int
     asset: AssetOut
     provenance: ProvenanceOut
+
+
+@dataclass(frozen=True)
+class GenerationReference:
+    """One labelled image in Gemini's multimodal brand context.
+
+    Bytes stay outside Genblaze's parameter surface. Only this content hash and
+    the B2 key reach the manifest, so a run remains reproducible without copying
+    several base64 images into provenance JSON.
+    """
+
+    role: str
+    label: str
+    data_b64: str
+    media_type: str
+    asset_key: str
+
+    def manifest_marker(self) -> str:
+        digest = hashlib.sha256(base64.b64decode(self.data_b64)).hexdigest()
+        return f"{self.role}:{digest}:{self.asset_key}"
 
 
 class RunFailed(RuntimeError):
@@ -120,8 +145,138 @@ def _sink(workspace: str) -> ObjectStorageSink:
     )
 
 
-def _provider() -> GMICloudImageProvider:
-    return GMICloudImageProvider(api_key=os.environ["GMI_API_KEY"])
+class PegGMICloudImageProvider(GMICloudImageProvider):
+    """Keep inline image bytes out of Genblaze's persisted parameter surface.
+
+    GMI requires edit inputs as base64 under ``image``/``mask``. Genblaze 0.3.8
+    scans every string in ``step.params`` for credential-shaped substrings, and
+    an opaque image can contain one by chance. More importantly, leaving the
+    whole image in params would copy it into the manifest.
+
+    Only payloads Pillow verifies as images are replaced. An actual credential
+    accidentally placed in one of these fields therefore remains untouched and
+    is still rejected by Genblaze's guard. The SHA marker preserves input
+    identity in the canonical hash; the original bytes exist only long enough
+    to build the outbound provider request.
+    """
+
+    _INLINE_KEYS = frozenset({"image", "mask"})
+    _MARKER_PREFIX = "peg-inline-image-sha256:"
+
+    def __init__(
+        self,
+        *args,
+        references: tuple[GenerationReference, ...] = (),
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._inline_images: dict[str, tuple[str, str]] = {}
+        self._references = references
+
+    @staticmethod
+    def _verified_image(value: object) -> tuple[bytes, str] | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            raw = base64.b64decode(value, validate=True)
+            with Image.open(io.BytesIO(raw)) as image:
+                image.verify()
+                media_type = Image.MIME.get(image.format or "", "image/png")
+            return raw, media_type
+        except Exception:  # noqa: BLE001 — non-image values must reach the secret guard
+            return None
+
+    def normalize_params(self, params: dict, modality=None) -> dict:
+        normalized = super().normalize_params(params, modality)
+        protected = dict(normalized)
+        for key in self._INLINE_KEYS:
+            verified = self._verified_image(protected.get(key))
+            if verified is None:
+                continue
+            raw, media_type = verified
+            marker = f"{self._MARKER_PREFIX}{hashlib.sha256(raw).hexdigest()}"
+            self._inline_images[marker] = (protected[key], media_type)
+            protected[key] = marker
+        return protected
+
+    def prepare_payload(self, step, *, base_params=None, validate_inputs=True):
+        payload = super().prepare_payload(
+            step,
+            base_params=base_params,
+            validate_inputs=validate_inputs,
+        )
+        payload.pop("peg_brand_references", None)
+        campaign_image: tuple[str, str] | None = None
+        for key in self._INLINE_KEYS:
+            marker = payload.get(key)
+            if isinstance(marker, str) and marker in self._inline_images:
+                encoded, media_type = self._inline_images[marker]
+                # The queue's top-level `image` contract accepts hosted URLs,
+                # but rejects both bare base64 strings and data URIs for this
+                # Gemini model. Its documented native `contents` contract has
+                # an explicit inlineData field and reliably distinguishes bytes
+                # from a URI. When contents is present, prompt/image are ignored,
+                # so remove both instead of shipping two competing request forms.
+                if key == "image" and step.model.lower().startswith("gemini-"):
+                    payload.pop("image", None)
+                    campaign_image = (encoded, media_type)
+                else:
+                    payload[key] = encoded
+
+        if step.model.lower().startswith("gemini-") and (
+            campaign_image is not None or self._references
+        ):
+            prompt = str(payload.pop("prompt", ""))
+            parts: list[dict] = [{"text": prompt}]
+            if campaign_image is not None:
+                encoded, media_type = campaign_image
+                parts.extend(
+                    [
+                        {
+                            "text": (
+                                "COMPOSITION REFERENCE. Preserve its camera distance, "
+                                "framing, perspective, subject scale, and spatial layout. "
+                                "Do not preserve its logos, names, signage, or colours."
+                            )
+                        },
+                        {
+                            "inlineData": {
+                                "mimeType": media_type,
+                                "data": encoded,
+                            }
+                        },
+                    ]
+                )
+            for reference in self._references:
+                parts.extend(
+                    [
+                        {"text": reference.label},
+                        {
+                            "inlineData": {
+                                "mimeType": reference.media_type,
+                                "data": reference.data_b64,
+                            }
+                        },
+                    ]
+                )
+            parts.append(
+                {
+                    "text": (
+                        "Generate the final image now. Follow the role of each labelled "
+                        "reference; never copy source-reference branding into the result."
+                    )
+                }
+            )
+            payload["contents"] = [{"role": "user", "parts": parts}]
+        return payload
+
+
+def _provider(
+    references: tuple[GenerationReference, ...] = (),
+) -> GMICloudImageProvider:
+    return PegGMICloudImageProvider(
+        api_key=os.environ["GMI_API_KEY"], references=references
+    )
 
 
 def fetch_object(key: str) -> bytes:
@@ -258,7 +413,13 @@ def _verify_manifest(key: str, raw: bytes) -> bool | None:
     return False
 
 
-def _submit(model: str, prompt: str, params: dict, workspace: str) -> tuple[str, int]:
+def _submit(
+    model: str,
+    prompt: str,
+    params: dict,
+    workspace: str,
+    references: tuple[GenerationReference, ...] = (),
+) -> tuple[str, int]:
     """Run one step with retry. Returns (run_id, attempts_used)."""
     last: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -266,7 +427,7 @@ def _submit(model: str, prompt: str, params: dict, workspace: str) -> tuple[str,
             result = (
                 Pipeline("peg", preflight=False)
                 .step(
-                    _provider(),
+                    _provider(references),
                     model=model,
                     prompt=prompt,
                     modality=Modality.IMAGE,
@@ -280,7 +441,17 @@ def _submit(model: str, prompt: str, params: dict, workspace: str) -> tuple[str,
             last = exc
             msg = str(exc).lower()
             # A rejected model or missing entitlement will not fix itself.
-            if any(s in msg for s in ("not found", "unknown model", "no access", "invalid payload")):
+            if any(
+                s in msg
+                for s in (
+                    "not found",
+                    "unknown model",
+                    "no access",
+                    "invalid payload",
+                    "invalid_input",
+                    "unsupported uri scheme",
+                )
+            ):
                 break
             if attempt < MAX_ATTEMPTS:
                 time.sleep(4 * attempt)
@@ -290,14 +461,24 @@ def _submit(model: str, prompt: str, params: dict, workspace: str) -> tuple[str,
 # ------------------------------------------------------------------ operations
 
 
-def run_generate(req: RunRequest, workspace: str) -> RunOutcome:
+def run_generate(
+    req: RunRequest,
+    workspace: str,
+    references: tuple[GenerationReference, ...] = (),
+) -> RunOutcome:
     params: dict = dict(req.params)
     if req.negative_prompt:
         params["negative_prompt"] = req.negative_prompt
     if req.image_b64:
         params["image"] = req.image_b64
+    if references:
+        params["peg_brand_references"] = [
+            reference.manifest_marker() for reference in references
+        ]
 
-    run_id, attempts = _submit(req.model, req.prompt, params, workspace)
+    run_id, attempts = _submit(
+        req.model, req.prompt, params, workspace, references=references
+    )
     asset, prov = _collect_run_output(run_id, workspace)
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
@@ -424,30 +605,164 @@ def run_outpaint(req: RunRequest, workspace: str) -> RunOutcome:
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 
-def _brand_locked(prompt: str, workspace: str) -> str:
-    """Prepend the workspace's own brand to a prompt.
+def _variant_score(filename: str) -> int:
+    name = filename.lower()
+    if "white" in name or "light" in name:
+        return 3
+    if any(word in name for word in ("blue", "colour", "color", "accent")):
+        return 2
+    if "black" in name or "dark" in name:
+        return 1
+    return 0
 
-    Applied here rather than in the browser so it cannot be bypassed and so it
-    covers every operation uniformly. Text conditioning is used because it is the
-    mechanism actually proven to hold; reference-image conditioning is untested.
 
-    A missing or incomplete brand is not an error — PEG still generates, just
-    without a lock.
+def _select_logo_assets(assets: list) -> list:
+    """Choose a wordmark and symbol without asking again on the canvas.
+
+    Brand Setup currently records role but not colour variant. Filenames are the
+    only honest signal available, so prefer a light variant (most generated PEG
+    plates are dark), then a brand-colour variant. Generic names still fall back
+    to the first uploaded logos.
+    """
+    logos = [asset for asset in assets if asset.kind == "logo"]
+    ranked = sorted(logos, key=lambda asset: _variant_score(asset.filename), reverse=True)
+    selected: list = []
+
+    def choose(words: tuple[str, ...]) -> None:
+        match = next(
+            (
+                asset
+                for asset in ranked
+                if asset not in selected
+                and any(word in asset.filename.lower() for word in words)
+            ),
+            None,
+        )
+        if match is not None:
+            selected.append(match)
+
+    choose(("wordmark", "lockup", "logotype"))
+    choose(("icon", "symbol", " mark"))
+    for asset in ranked:
+        if len(selected) >= MAX_LOGO_REFERENCES:
+            break
+        if asset not in selected:
+            selected.append(asset)
+    return selected
+
+
+def _asset_reference(asset, role: str, label: str) -> GenerationReference:
+    """Fetch a saved brand asset and turn it into a Gemini-safe raster input."""
+    import brand as brand_module
+
+    try:
+        raw = fetch_object(asset.asset_key)
+        if brand_module.is_svg(asset.filename, asset.content_type):
+            # Models consume pixels, while the approved SVG remains untouched in
+            # B2 for the deterministic final composite.
+            raw = cairosvg.svg2png(bytestring=raw, output_width=REFERENCE_EDGE)
+        with Image.open(io.BytesIO(raw)) as image:
+            image.load()
+            image.thumbnail((REFERENCE_EDGE, REFERENCE_EDGE), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            if role == "style":
+                image.convert("RGB").save(
+                    buf, format="JPEG", quality=90, optimize=True, subsampling=0
+                )
+                media_type = "image/jpeg"
+            else:
+                image.convert("RGBA").save(buf, format="PNG", optimize=True)
+                media_type = "image/png"
+            raw = buf.getvalue()
+    except Exception as exc:  # noqa: BLE001 — do not spend on an incomplete brand lock
+        raise RunFailed(f"could not prepare brand asset {asset.filename!r}: {exc}") from exc
+
+    return GenerationReference(
+        role=role,
+        label=label,
+        data_b64=base64.b64encode(raw).decode(),
+        media_type=media_type,
+        asset_key=asset.asset_key,
+    )
+
+
+def _generation_brand_context(
+    req: RunRequest, workspace: str
+) -> tuple[str, tuple[GenerationReference, ...]]:
+    """Build the automatic brand bundle for a generation.
+
+    The workspace, not the canvas, owns durable brand assets. This is therefore
+    assembled at the protected service boundary: users upload once in Brand
+    Setup and every Gemini generation inherits the same labelled references.
     """
     try:
         import brand as brand_module
 
-        prefix = brand_module.load_brand(workspace).prompt_prefix().strip()
-    except Exception:  # noqa: BLE001 — never fail a run over the brand document
-        return prompt
+        current = brand_module.load_brand(workspace)
+    except Exception:  # noqa: BLE001 — a workspace without a brand may still generate
+        return req.prompt, ()
 
-    if not prefix:
-        return prompt
-    return f"{prefix} {prompt}".strip() if prompt.strip() else prefix
+    prompt_parts: list[str] = []
+    if current.name.strip():
+        prompt_parts.append(f'Create this for the brand "{current.name.strip()}".')
+    prefix = current.prompt_prefix().strip()
+    if prefix:
+        prompt_parts.append(prefix)
+    if req.prompt.strip():
+        prompt_parts.append(req.prompt.strip())
+
+    if req.operation != "generate" or not req.model.lower().startswith("gemini-"):
+        return " ".join(prompt_parts), ()
+
+    references: list[GenerationReference] = []
+    for index, asset in enumerate(
+        current.style_references[:MAX_STYLE_REFERENCES], start=1
+    ):
+        references.append(
+            _asset_reference(
+                asset,
+                "style",
+                (
+                    f"BRAND STYLE REFERENCE {index}. Borrow only its palette, lighting, "
+                    "materials, graphic language, and mood. Do not copy its subject, "
+                    "layout, logos, or words."
+                ),
+            )
+        )
+
+    selected_logos = _select_logo_assets(current.composites)
+    for index, asset in enumerate(selected_logos, start=1):
+        filename = asset.filename.lower()
+        if any(word in filename for word in ("wordmark", "lockup", "logotype")):
+            role = "primary wordmark"
+        elif any(word in filename for word in ("icon", "symbol", " mark")):
+            role = "brand symbol"
+        else:
+            role = f"approved identity asset {index}"
+        references.append(
+            _asset_reference(
+                asset,
+                "logo",
+                (
+                    f"APPROVED {role.upper()}. This is exact brand identity artwork. "
+                    "Use its spelling, geometry, and proportions faithfully wherever "
+                    "the brief calls for visible branding. Never approximate it and "
+                    "never substitute branding from another reference."
+                ),
+            )
+        )
+
+    if selected_logos:
+        prompt_parts.append(
+            "Remove every source-reference logo, brand name, and piece of branded "
+            "signage. The approved identity references are the only permitted brand."
+        )
+    return " ".join(prompt_parts), tuple(references)
 
 
 def execute(req: RunRequest, workspace: str) -> RunOutcome:
-    req = req.model_copy(update={"prompt": _brand_locked(req.prompt, workspace)})
+    prompt, references = _generation_brand_context(req, workspace)
+    req = req.model_copy(update={"prompt": prompt})
     if req.operation == "outpaint":
         return run_outpaint(req, workspace)
-    return run_generate(req, workspace)
+    return run_generate(req, workspace, references=references)

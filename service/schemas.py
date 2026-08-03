@@ -86,9 +86,9 @@ AssetKind = Literal["style", "logo", "screenshot", "product", "other"]
 class BrandAssetIn(BaseModel):
     """One uploaded brand file, base64-encoded.
 
-    `kind` routes it. Only `style` conditions generation; everything else is
-    composited on top of a finished plate and must never be used as a style
-    reference, because a logo fed in that way produces garbled logo-like shapes.
+    `kind` routes it. A `style` asset teaches the look; a `logo` may be supplied
+    to a capable model as separately labelled identity artwork. Composite assets
+    remain the approved originals used for deterministic final placement.
     """
 
     filename: str = Field(max_length=200)

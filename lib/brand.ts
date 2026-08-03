@@ -2,7 +2,9 @@
  * The brand kit, client side.
  *
  * Mirrors `service/brand.py`. Two shapes matter and must not be collapsed:
- * style references condition generation, logos are only ever composited on top.
+ * Style references teach the look. Logos stay in the composite lane as the
+ * approved originals, while capable models may also receive a rasterized copy
+ * as separately labelled identity artwork.
  */
 
 /** What a composited asset is. Decides how it gets placed, never whether it is generated. */
