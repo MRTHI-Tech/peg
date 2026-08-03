@@ -10,7 +10,7 @@ from pathlib import Path
 # from anywhere instead of only with a hand-set PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 import runner  # noqa: E402
 from schemas import FormatSpec  # noqa: E402
@@ -23,6 +23,26 @@ class BreakpointGeometryTests(unittest.TestCase):
     def decode(self, fmt: FormatSpec) -> tuple[Image.Image, Image.Image]:
         canvas_bytes, mask_bytes = runner._compose_for_format(self.source, fmt)
         return Image.open(io.BytesIO(canvas_bytes)), Image.open(io.BytesIO(mask_bytes))
+
+    @staticmethod
+    def framed_artwork() -> Image.Image:
+        image = Image.new("RGB", (300, 300))
+        pixels = image.load()
+        for y in range(300):
+            for x in range(300):
+                pixels[x, y] = (70 + x // 5, 45 + y // 8, 30 + (x + y) // 16)
+
+        draw = ImageDraw.Draw(image)
+        cyan = (0, 240, 244)
+        draw.rectangle((0, 0, 299, 9), fill=cyan)
+        draw.rectangle((0, 290, 299, 299), fill=cyan)
+        draw.rectangle((0, 0, 9, 299), fill=cyan)
+        draw.rectangle((290, 0, 299, 299), fill=cyan)
+        # A flattened corner lockup stays part of the retained content. Its cyan
+        # backing must not cause the old square frame to survive at the join.
+        draw.rectangle((225, 225, 289, 289), fill=cyan)
+        draw.rectangle((245, 245, 275, 270), fill=(12, 5, 18))
+        return image
 
     def test_desktop_keeps_plate_right_and_generates_left(self) -> None:
         fmt = FormatSpec(
@@ -81,6 +101,70 @@ class BreakpointGeometryTests(unittest.TestCase):
         low, high = mask.getextrema()
         self.assertEqual((low, high), (0, 255))
         self.assertTrue(any(0 < value < 255 for value in mask.getdata()))
+
+    def test_flat_brand_frame_moves_to_the_final_perimeter(self) -> None:
+        self.source = self.framed_artwork()
+        fmt = FormatSpec(
+            width=900,
+            height=300,
+            focal_point="right",
+            safe_area="left-third",
+        )
+
+        frame = runner._detect_embedded_frame(self.source)
+        self.assertIsNotNone(frame)
+        self.assertEqual((frame.left, frame.top, frame.right, frame.bottom), (10, 10, 10, 10))
+
+        canvas, mask = self.decode(fmt)
+        cyan = (0, 240, 244)
+
+        def close(pixel: tuple[int, int, int], expected: tuple[int, int, int]) -> bool:
+            return max(abs(a - b) for a, b in zip(pixel, expected)) < 16
+
+        # The frame surrounds the complete wide result and is never offered to
+        # genfill, so brand chrome cannot be repainted or omitted.
+        for point in ((0, 150), (450, 0), (899, 150), (450, 299)):
+            self.assertTrue(close(canvas.getpixel(point), cyan))
+            self.assertEqual(mask.getpixel(point), 0)
+
+        # x=610 is where the peeled scene begins. The source's old left cyan
+        # rule must not remain there as an internal poster boundary.
+        interior_cyan = sum(
+            close(canvas.getpixel((610, y)), cyan) for y in range(10, 290)
+        )
+        self.assertLess(interior_cyan, 10)
+        self.assertEqual(mask.getpixel((750, 150)), 0)
+        self.assertEqual(mask.getpixel((100, 150)), 255)
+
+        # Simulate a provider response: white mask pixels receive generated
+        # scenery while black pixels stay verbatim. The only full cyan rules in
+        # the completed image must still be the four outer edges.
+        generated = Image.new("RGB", canvas.size, (210, 180, 120))
+        completed = Image.composite(generated, canvas, mask)
+        for point in ((0, 150), (450, 0), (899, 150), (450, 299)):
+            self.assertTrue(close(completed.getpixel(point), cyan))
+        completed_internal_cyan = sum(
+            close(completed.getpixel((610, y)), cyan) for y in range(10, 290)
+        )
+        self.assertLess(completed_internal_cyan, 10)
+        self.assertLess(max(completed.getpixel((850, 250))), 32)
+
+    def test_unframed_gradient_does_not_trigger_frame_extraction(self) -> None:
+        source = Image.new("RGB", (300, 300))
+        pixels = source.load()
+        for y in range(300):
+            for x in range(300):
+                pixels[x, y] = (20 + x // 2, 30 + y // 2, 45 + (x + y) // 4)
+
+        self.assertIsNone(runner._detect_embedded_frame(source))
+
+    def test_one_flat_edge_is_not_mistaken_for_a_four_sided_frame(self) -> None:
+        source = Image.new("RGB", (300, 300), (80, 60, 40))
+        draw = ImageDraw.Draw(source)
+        draw.rectangle((0, 0, 299, 14), fill=(120, 180, 240))
+        draw.rectangle((0, 15, 299, 299), fill=(40, 40, 40))
+
+        self.assertIsNone(runner._detect_embedded_frame(source))
 
 
 if __name__ == "__main__":

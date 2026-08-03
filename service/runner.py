@@ -66,6 +66,17 @@ REFERENCE_EDGE = 1024
 # Mask feathering, in pixels, so the outpaint boundary is not a hard seam.
 FEATHER_SIGMA = 16
 
+# Finished artwork sometimes reaches Extend Canvas with a simple brand frame
+# already flattened into the pixels. Treating that frame as scene content turns
+# the entire source into an immutable poster inside the wider result. Detection
+# is deliberately conservative: every edge must agree on one colour and the
+# interior must be materially different.
+FRAME_COLOR_TOLERANCE = 24
+FRAME_EDGE_COVERAGE = 0.95
+FRAME_LINE_COVERAGE = 0.85
+FRAME_MAX_RATIO = 0.12
+FRAME_INTERIOR_MAX_COVERAGE = 0.35
+
 # Without this, genfill cheerfully paints copies of the subject into the space
 # that was supposed to stay empty for the headline.
 DEFAULT_NEGATIVE = (
@@ -88,6 +99,21 @@ class RunOutcome:
     attempts: int
     asset: AssetOut
     provenance: ProvenanceOut
+
+
+@dataclass(frozen=True)
+class EmbeddedFrame:
+    """A flat, near-solid frame surrounding otherwise independent artwork."""
+
+    left: int
+    top: int
+    right: int
+    bottom: int
+    color: tuple[int, int, int]
+
+    def content_box(self, size: tuple[int, int]) -> tuple[int, int, int, int]:
+        width, height = size
+        return self.left, self.top, width - self.right, height - self.bottom
 
 
 @dataclass(frozen=True)
@@ -645,28 +671,195 @@ def _placement_for_format(
     return (plate_w, plate_h), (x, y)
 
 
+def _close_to_color(pixel: tuple[int, int, int], color: tuple[int, int, int]) -> bool:
+    return max(abs(channel - expected) for channel, expected in zip(pixel, color)) <= (
+        FRAME_COLOR_TOLERANCE
+    )
+
+
+def _median_color(pixels: list[tuple[int, int, int]]) -> tuple[int, int, int]:
+    middle = len(pixels) // 2
+    return tuple(sorted(pixel[channel] for pixel in pixels)[middle] for channel in range(3))
+
+
+def _edge_line(
+    source: Image.Image, side: str, offset: int
+) -> list[tuple[int, int, int]]:
+    width, height = source.size
+    if side == "top":
+        return list(source.crop((0, offset, width, offset + 1)).getdata())
+    if side == "bottom":
+        y = height - offset - 1
+        return list(source.crop((0, y, width, y + 1)).getdata())
+    if side == "left":
+        return list(source.crop((offset, 0, offset + 1, height)).getdata())
+    x = width - offset - 1
+    return list(source.crop((x, 0, x + 1, height)).getdata())
+
+
+def _detect_embedded_frame(source: Image.Image) -> EmbeddedFrame | None:
+    """Find a simple four-sided frame without mistaking a flat scene for one.
+
+    The fallback matters as much as detection: unframed plates keep the proven
+    contain-and-outpaint geometry. A one-sided sky band or dark vignette also
+    stays untouched because all four outer edges must share the same colour.
+    """
+    source = source.convert("RGB")
+    width, height = source.size
+    short_edge = min(width, height)
+    if short_edge < 64:
+        return None
+
+    perimeter = (
+        _edge_line(source, "top", 0)
+        + _edge_line(source, "bottom", 0)
+        + _edge_line(source, "left", 0)
+        + _edge_line(source, "right", 0)
+    )
+    color = _median_color(perimeter)
+    edge_coverage = sum(_close_to_color(pixel, color) for pixel in perimeter) / len(
+        perimeter
+    )
+    if edge_coverage < FRAME_EDGE_COVERAGE:
+        return None
+
+    max_scan = max(1, round(short_edge * FRAME_MAX_RATIO))
+
+    def thickness(side: str) -> int:
+        for offset in range(max_scan):
+            line = _edge_line(source, side, offset)
+            coverage = sum(_close_to_color(pixel, color) for pixel in line) / len(line)
+            if coverage < FRAME_LINE_COVERAGE:
+                return offset
+        return max_scan
+
+    sides = [thickness(side) for side in ("left", "top", "right", "bottom")]
+    minimum = max(2, round(short_edge * 0.005))
+    if min(sides) < minimum or max(sides) > min(sides) * 1.75:
+        return None
+
+    frame = EmbeddedFrame(*sides, color=color)
+    box = frame.content_box(source.size)
+    if box[2] - box[0] < 32 or box[3] - box[1] < 32:
+        return None
+
+    # Solid-colour plates make every scan line look like a frame. Require the
+    # proposed interior to contain enough genuinely different image content.
+    sample = source.crop(box)
+    sample.thumbnail((96, 96), Image.Resampling.BOX)
+    interior = list(sample.getdata())
+    interior_coverage = sum(_close_to_color(pixel, color) for pixel in interior) / len(
+        interior
+    )
+    return frame if interior_coverage <= FRAME_INTERIOR_MAX_COVERAGE else None
+
+
+def _scaled_frame_insets(
+    frame: EmbeddedFrame,
+    source_size: tuple[int, int],
+    target_size: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    scale = min(target_size) / min(source_size)
+    return tuple(max(1, round(value * scale)) for value in (
+        frame.left,
+        frame.top,
+        frame.right,
+        frame.bottom,
+    ))
+
+
+def _paint_embedded_frame(
+    canvas: Image.Image,
+    source: Image.Image,
+    frame: EmbeddedFrame,
+    insets: tuple[int, int, int, int],
+) -> None:
+    """Stretch only the source's edge strips around the new outer perimeter."""
+    width, height = canvas.size
+    source_w, source_h = source.size
+    left, top, right, bottom = insets
+
+    canvas.paste(
+        source.crop((0, 0, source_w, frame.top)).resize(
+            (width, top), Image.Resampling.LANCZOS
+        ),
+        (0, 0),
+    )
+    canvas.paste(
+        source.crop((0, source_h - frame.bottom, source_w, source_h)).resize(
+            (width, bottom), Image.Resampling.LANCZOS
+        ),
+        (0, height - bottom),
+    )
+    inner_height = height - top - bottom
+    canvas.paste(
+        source.crop((0, frame.top, frame.left, source_h - frame.bottom)).resize(
+            (left, inner_height), Image.Resampling.LANCZOS
+        ),
+        (0, top),
+    )
+    canvas.paste(
+        source.crop(
+            (source_w - frame.right, frame.top, source_w, source_h - frame.bottom)
+        ).resize((right, inner_height), Image.Resampling.LANCZOS),
+        (width - right, top),
+    )
+
+
 def _compose_for_format(source: Image.Image, fmt: FormatSpec) -> tuple[bytes, bytes]:
-    """Seat the whole plate outside the safe band; mask everything else.
+    """Seat scene pixels outside the safe band; mask everything else.
 
     Returns (canvas_jpeg, mask_png). JPEG for the canvas because a PNG of a
     smooth gradient is ~3x the bytes and the endpoint is size-sensitive.
+
+    A detected flat frame is peeled before placement and rebuilt at the final
+    perimeter. This prevents a finished square key visual from surviving as a
+    visibly separate poster inside a wide result.
     """
+    source = source.convert("RGB")
     w, h = fmt.width, fmt.height
-    plate_size, (x, y) = _placement_for_format(source.size, fmt)
-    plate = source.resize(plate_size, Image.LANCZOS)
+    frame = _detect_embedded_frame(source)
+
+    if frame is None:
+        content = source
+        insets = (0, 0, 0, 0)
+        working_fmt = fmt
+    else:
+        content = source.crop(frame.content_box(source.size))
+        insets = _scaled_frame_insets(frame, source.size, (w, h))
+        left, top, right, bottom = insets
+        inner_w, inner_h = w - left - right, h - top - bottom
+        if inner_w < 64 or inner_h < 64:
+            raise RunFailed("target format is too small for the detected source frame")
+        working_fmt = fmt.model_copy(update={"width": inner_w, "height": inner_h})
+
+    plate_size, (x, y) = _placement_for_format(content.size, working_fmt)
+    plate = content.resize(plate_size, Image.LANCZOS)
 
     # A source-derived underlay does not push every customer's fill toward the
     # fictional demo brand's violet, while still giving genfill a compatible base.
-    swatch = source.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
-    canvas = Image.new("RGB", (w, h), swatch)
-    canvas.paste(plate, (x, y))
+    swatch = content.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+    inner_canvas = Image.new("RGB", (working_fmt.width, working_fmt.height), swatch)
+    inner_canvas.paste(plate, (x, y))
 
-    # White = generate, black = keep. Feathered so the join is not a visible seam.
-    mask = Image.new("L", (w, h), 255)
-    mask.paste(Image.new("L", plate_size, 0), (x, y))
-    if mask.getextrema() == (0, 0):
+    # White = generate, black = keep. Feather only the scene join; a brand frame
+    # is an intentional hard edge and stays completely protected.
+    inner_mask = Image.new("L", inner_canvas.size, 255)
+    inner_mask.paste(Image.new("L", plate_size, 0), (x, y))
+    if inner_mask.getextrema() == (0, 0):
         raise RunFailed("target format leaves no area to outpaint")
-    mask = mask.filter(ImageFilter.GaussianBlur(FEATHER_SIGMA))
+    inner_mask = inner_mask.filter(ImageFilter.GaussianBlur(FEATHER_SIGMA))
+
+    if frame is None:
+        canvas = inner_canvas
+        mask = inner_mask
+    else:
+        left, top, _, _ = insets
+        canvas = Image.new("RGB", (w, h), frame.color)
+        _paint_embedded_frame(canvas, source, frame, insets)
+        canvas.paste(inner_canvas, (left, top))
+        mask = Image.new("L", (w, h), 0)
+        mask.paste(inner_mask, (left, top))
 
     cbuf, mbuf = io.BytesIO(), io.BytesIO()
     canvas.save(cbuf, format="JPEG", quality=92, subsampling=0)
