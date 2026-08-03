@@ -2,11 +2,17 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "weavy",
+      "name": "peg-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "peg-service",
+      "runtimeExecutable": "service/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "--app-dir", "service", "main:app", "--port", "8010"],
+      "port": 8010
     }
   ]
 }

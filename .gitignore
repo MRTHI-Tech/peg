@@ -28,3 +28,6 @@ service/manifests/
 
 # Claude Code local settings (may contain machine-specific paths)
 .claude/settings.local.json
+
+# clerk configuration (can include secrets)
+/.clerk/

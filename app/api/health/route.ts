@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_HEADERS, SERVICE_URL} from '@/lib/service-config';
+import {SERVICE_HEADERS, SERVICE_TIMEOUT_MS, SERVICE_URL} from '@/lib/service-config';
 
 /**
  * Deployment diagnostics.
@@ -24,7 +24,7 @@ export async function GET() {
   try {
     const upstream = await fetch(`${SERVICE_URL}/health`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
     });
     diagnostics.service = upstream.ok ? 'ok' : `http ${upstream.status}`;
     diagnostics.detail = await upstream.text().then(t => t.slice(0, 200));
