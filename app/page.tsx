@@ -9,7 +9,7 @@ import {Button} from '@astryxdesign/core/Button';
 import {Divider} from '@astryxdesign/core/Divider';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {Icon} from '@astryxdesign/core/Icon';
-import {Sparkles} from 'lucide-react';
+import {CloudOff, Sparkles} from 'lucide-react';
 
 import {BrandGateBanner} from '@/components/brand/BrandGateBanner';
 import {PegLogo} from '@/components/brand/PegLogo';
@@ -33,7 +33,7 @@ export default async function GalleryPage() {
 
   // Real storage, not fixtures: a workspace that has generated nothing shows
   // nothing, which is the whole point of the empty state.
-  const generations = await listGenerations();
+  const {generations, reachable} = await listGenerations();
 
   return (
     <AppShell
@@ -94,13 +94,21 @@ export default async function GalleryPage() {
         <VStack gap={3}>
           <HStack justify="between" align="center">
             <Heading level={2}>Recent work</Heading>
-            {generations.length > 0 && (
+            {reachable && generations.length > 0 && (
               <Text type="supporting">
                 {generations.length} {generations.length === 1 ? 'generation' : 'generations'}
               </Text>
             )}
           </HStack>
-          {generations.length === 0 ? (
+          {!reachable ? (
+            /* Never claim the workspace is empty when storage did not answer —
+               on the free tier a cold service looks exactly like a new one. */
+            <EmptyState
+              title="Couldn't reach your storage"
+              description="The generation service may still be waking up, which takes up to a minute on the free tier. Reload in a moment."
+              icon={<Icon icon={CloudOff} size="lg" />}
+            />
+          ) : generations.length === 0 ? (
             <EmptyState
               title="Nothing generated yet"
               description="Start from a template above, or open a blank canvas. Everything you make lands here with its signed lineage."

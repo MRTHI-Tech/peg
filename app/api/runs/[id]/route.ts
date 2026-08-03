@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_URL, serviceHeaders} from '@/lib/service-config';
+import {SERVICE_TIMEOUT_MS, SERVICE_URL, serviceHeaders} from '@/lib/service-config';
 import {currentWorkspace, unauthorized} from '@/lib/workspace';
 
 /** Poll one run. The client calls this on an interval until it settles. */
@@ -14,7 +14,7 @@ export async function GET(_request: Request, {params}: {params: Promise<{id: str
     const upstream = await fetch(`${SERVICE_URL}/runs/${encodeURIComponent(id)}`, {
       cache: 'no-store',
       headers: serviceHeaders(workspace),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
     });
 
     if (upstream.status === 404) {

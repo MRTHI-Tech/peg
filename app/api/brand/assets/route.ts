@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_URL, serviceHeaders} from '@/lib/service-config';
+import {SERVICE_TIMEOUT_MS, SERVICE_URL, serviceHeaders} from '@/lib/service-config';
 import {canEditBrand, currentWorkspace, forbidden, unauthorized} from '@/lib/workspace';
 
 /**
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       method: 'POST',
       headers: serviceHeaders(workspace),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
     });
     const data = await upstream.json().catch(() => null);
     if (!upstream.ok) {
@@ -63,7 +63,7 @@ export async function PATCH(request: Request) {
       method: 'PATCH',
       headers: serviceHeaders(workspace),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
     });
     const data = await upstream.json().catch(() => null);
     if (!upstream.ok) {
@@ -93,7 +93,7 @@ export async function DELETE(request: Request) {
   try {
     const upstream = await fetch(
       `${SERVICE_URL}/brand/assets?asset_key=${encodeURIComponent(assetKey)}`,
-      {method: 'DELETE', headers: serviceHeaders(workspace), signal: AbortSignal.timeout(30_000)},
+      {method: 'DELETE', headers: serviceHeaders(workspace), signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS)},
     );
     const data = await upstream.json().catch(() => null);
     if (!upstream.ok) {

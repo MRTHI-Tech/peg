@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_URL, serviceHeaders} from '@/lib/service-config';
+import {SERVICE_TIMEOUT_MS, SERVICE_URL, serviceHeaders} from '@/lib/service-config';
 import {currentWorkspace, unauthorized} from '@/lib/workspace';
 
 /**
@@ -18,7 +18,7 @@ export async function GET() {
     const upstream = await fetch(`${SERVICE_URL}/projects`, {
       cache: 'no-store',
       headers: serviceHeaders(workspace),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS),
     });
     if (!upstream.ok) return NextResponse.json({projects: []});
     return NextResponse.json(await upstream.json());

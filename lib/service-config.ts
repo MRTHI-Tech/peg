@@ -15,6 +15,17 @@ function normalize(raw: string): string {
 
 export const SERVICE_URL = normalize(process.env.PEG_SERVICE_URL ?? 'http://127.0.0.1:8010');
 
+/**
+ * How long to wait on peg-service before giving up.
+ *
+ * Sized for a cold start, not a warm request. Render's free tier idles the
+ * service after ~15 minutes and waking it was measured at 31s against the live
+ * deploy — AGENTS.md documents 50s+. The previous 15–30s ceilings meant the
+ * first request after idle always failed, which read as "the service is broken"
+ * rather than "the service is waking up".
+ */
+export const SERVICE_TIMEOUT_MS = 75_000;
+
 const TOKEN = (process.env.PEG_SERVICE_TOKEN ?? '').trim();
 
 export const SERVICE_HEADERS: Record<string, string> = {
