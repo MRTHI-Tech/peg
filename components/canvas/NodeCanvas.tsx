@@ -40,6 +40,10 @@ interface Props {
   onViewportChange: (vp: Viewport) => void;
   onSelectionChange: (ids: string[]) => void;
   onNodeMove: (id: string, x: number, y: number) => void;
+  onNodeClear: (id: string) => void;
+  onNodeRename: (id: string, title: string) => void;
+  onNodeLockToggle: (id: string) => void;
+  onNodeDelete: (id: string) => void;
   onConnect: (edge: Omit<Edge, 'id'>) => void;
   onEdgeDelete: (id: string) => void;
   onRunNode: (node: PegNode) => void;
@@ -53,6 +57,10 @@ export function NodeCanvas({
   onViewportChange,
   onSelectionChange,
   onNodeMove,
+  onNodeClear,
+  onNodeRename,
+  onNodeLockToggle,
+  onNodeDelete,
   onConnect,
   onEdgeDelete,
   onRunNode,
@@ -147,8 +155,6 @@ export function NodeCanvas({
 
   // --------------------------------------------------------------- node drag
   const startNodeDrag = (e: React.PointerEvent, node: PegNode) => {
-    const world = pointerWorld(e);
-    dragRef.current = {nodeId: node.id, offsetX: world.x - node.x, offsetY: world.y - node.y};
     const additive = e.shiftKey || e.metaKey;
     if (additive) {
       onSelectionChange(
@@ -157,6 +163,10 @@ export function NodeCanvas({
     } else if (!selectedIds.includes(node.id)) {
       onSelectionChange([node.id]);
     }
+    if (node.isLocked) return;
+
+    const world = pointerWorld(e);
+    dragRef.current = {nodeId: node.id, offsetX: world.x - node.x, offsetY: world.y - node.y};
     (e.currentTarget as HTMLElement).closest('[data-canvas-root]')?.setPointerCapture?.(e.pointerId);
   };
 
@@ -233,6 +243,7 @@ export function NodeCanvas({
         backgroundSize: `${24 * viewport.zoom}px ${24 * viewport.zoom}px`,
         backgroundPosition: `${viewport.x}px ${viewport.y}px`,
         touchAction: 'none',
+        userSelect: 'none',
       }}>
       <div
         style={{
@@ -323,6 +334,10 @@ export function NodeCanvas({
             onHeaderPointerDown={e => startNodeDrag(e, node)}
             onOutputPointerDown={(e, portId, type) => startConnection(e, node, portId, type)}
             onRun={() => onRunNode(node)}
+            onClear={() => onNodeClear(node.id)}
+            onRename={title => onNodeRename(node.id, title)}
+            onToggleLock={() => onNodeLockToggle(node.id)}
+            onDelete={() => onNodeDelete(node.id)}
           />
         ))}
       </div>

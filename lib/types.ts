@@ -148,6 +148,8 @@ export interface PegNode {
   x: number;
   y: number;
   width: number;
+  /** Locked nodes can be selected and edited, but not moved on the canvas. */
+  isLocked?: boolean;
   status: NodeStatus;
   params: Record<string, ParamValue>;
   inputs: Port[];

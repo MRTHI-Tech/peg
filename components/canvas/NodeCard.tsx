@@ -1,11 +1,17 @@
 'use client';
 
-import {MoreHorizontal, Play, Sparkles} from 'lucide-react';
+import {useState} from 'react';
+import {Eraser, Lock, LockOpen, Pencil, Play, Sparkles, Trash2} from 'lucide-react';
 
+import {Button} from '@astryxdesign/core/Button';
+import {DialogHeader, useImperativeDialog} from '@astryxdesign/core/Dialog';
 import {Text} from '@astryxdesign/core/Text';
 import {Icon} from '@astryxdesign/core/Icon';
+import {Layout, LayoutContent, LayoutFooter} from '@astryxdesign/core/Layout';
+import {MoreMenu} from '@astryxdesign/core/MoreMenu';
 import {HStack} from '@astryxdesign/core/Stack';
 import {Spinner} from '@astryxdesign/core/Spinner';
+import {TextInput} from '@astryxdesign/core/TextInput';
 
 import {PORT_SPACING, PORT_TOP_OFFSET, PORT_TYPE_COLOR} from '@/lib/canvas-geometry';
 import {isExecutableNode} from '@/lib/graph-execution';
@@ -25,6 +31,10 @@ interface Props {
   onHeaderPointerDown: (e: React.PointerEvent) => void;
   onOutputPointerDown: (e: React.PointerEvent, portId: string, type: string) => void;
   onRun: () => void;
+  onClear: () => void;
+  onRename: (title: string) => void;
+  onToggleLock: () => void;
+  onDelete: () => void;
 }
 
 const STATUS_RING: Record<PegNode['status'], string | undefined> = {
@@ -43,13 +53,31 @@ export function NodeCard({
   onHeaderPointerDown,
   onOutputPointerDown,
   onRun,
+  onClear,
+  onRename,
+  onToggleLock,
+  onDelete,
 }: Props) {
   const ring = isSelected ? 'var(--color-accent)' : STATUS_RING[node.status];
   const isTextNode = node.text != null;
   const isBusy = node.status === 'queued' || node.status === 'running';
+  const referenceImage = node.type === 'reference' ? String(node.params.image ?? '') : '';
+  const previewUrl = node.result?.url || referenceImage;
+  const renameDialog = useImperativeDialog({purpose: 'form', width: 400});
+
+  const openRenameDialog = () => {
+    renameDialog.show(
+      <RenameNodeDialog
+        initialTitle={node.title}
+        onRename={onRename}
+        onClose={() => renameDialog.hide()}
+      />,
+    );
+  };
 
   return (
-    <div
+    <>
+      <div
       onPointerDown={e => {
         // Ports handle their own pointer events and stop propagation.
         e.stopPropagation();
@@ -67,123 +95,144 @@ export function NodeCard({
         // Cheaper compositing while the canvas is zoomed out.
         contentVisibility: zoom < 0.3 ? 'auto' : 'visible',
       }}>
-      {/* ------------------------------------------------------------- header */}
-      <HStack
-        gap={1}
-        align="center"
-        justify="between"
-        paddingInline={1.5}
-        style={{
-          blockSize: NODE_HEADER_HEIGHT,
-          cursor: 'grab',
-          borderBlockEnd: '1px solid var(--color-border)',
-        }}>
-        <HStack gap={1} align="center" style={{minInlineSize: 0}}>
-          <Icon icon={Sparkles} size="xsm" color="secondary" />
-          <Text type="supporting" color="primary" maxLines={1}>
-            {node.title}
-          </Text>
-        </HStack>
-        <HStack gap={1} align="center">
-          {isBusy && <Spinner size="sm" />}
-          <Icon icon={MoreHorizontal} size="xsm" color="secondary" />
-        </HStack>
-      </HStack>
-
-      {/* --------------------------------------------------------------- body */}
-      {isTextNode ? (
-        <div style={{padding: 'var(--spacing-2)', maxBlockSize: 180, overflow: 'hidden'}}>
-          <Text type="supporting" color="secondary" maxLines={9}>
-            {node.text}
-          </Text>
-        </div>
-      ) : node.result ? (
-        <div style={{position: 'relative', lineHeight: 0}}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- data-URI placeholder */}
-          <img
-            src={node.result.url}
-            alt={`${node.title} output`}
-            draggable={false}
-            style={{
-              inlineSize: '100%',
-              aspectRatio:
-                node.result.width && node.result.height
-                  ? `${node.result.width} / ${node.result.height}`
-                  : '1 / 1',
-              objectFit: 'cover',
-              display: 'block',
-            }}
-          />
-        </div>
-      ) : (
-        <div
-          style={{
-            blockSize: 96,
-            display: 'grid',
-            placeItems: 'center',
-            padding: 'var(--spacing-2)',
-            backgroundColor: 'var(--color-background-muted)',
-          }}>
-          {node.status === 'error' ? (
-            <Text type="supporting" color="primary" maxLines={4} style={{color: 'var(--color-error)'}}>
-              {node.error ?? 'Run failed'}
-            </Text>
-          ) : (
-            <Text type="supporting" color="disabled">
-              {isBusy ? 'Generating…' : 'No output yet'}
-            </Text>
-          )}
-        </div>
-      )}
-
-      {/* ------------------------------------------------------------- footer */}
-      {/* Only model-backed nodes can run. Brand nodes (Style Kit, Format,
-          Product Asset) carry constraints, so offering them a Run button
-          promises something that would silently do nothing. */}
-      {!isTextNode && isExecutableNode(node) && (
+      {/* Keep visual content inside the card curve without clipping the ports. */}
+      <div style={{borderRadius: 'inherit', overflow: 'hidden'}}>
+        {/* ----------------------------------------------------------- header */}
         <HStack
           gap={1}
           align="center"
           justify="between"
-          padding={1}
-          style={{borderBlockStart: '1px solid var(--color-border)'}}>
-          {node.cost > 0 ? (
-            <HStack gap={0.5} align="center">
-              <Icon icon={Sparkles} size="xsm" color="secondary" />
-              <Text type="supporting" color="secondary">
-                {node.cost}
-              </Text>
-            </HStack>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            // The card itself starts a drag on pointerdown, so the button has to
-            // claim the event before it bubbles.
-            onPointerDown={e => e.stopPropagation()}
-            onClick={e => {
-              e.stopPropagation();
-              onRun();
-            }}
-            disabled={isBusy}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--spacing-0-5)',
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: isBusy ? 'progress' : 'pointer',
-              color: 'inherit',
-            }}>
-            <Icon icon={Play} size="xsm" color={isBusy ? 'disabled' : 'accent'} />
-            <Text type="supporting" color={isBusy ? 'disabled' : 'accent'}>
-              {isBusy ? 'Running…' : 'Run'}
+          paddingInline={1.5}
+          style={{
+            blockSize: NODE_HEADER_HEIGHT,
+            cursor: 'grab',
+            borderBlockEnd: '1px solid var(--color-border)',
+          }}>
+          <HStack gap={1} align="center" style={{minInlineSize: 0}}>
+            <Icon icon={Sparkles} size="xsm" color="secondary" />
+            <Text type="supporting" color="primary" maxLines={1}>
+              {node.title}
             </Text>
-          </button>
+          </HStack>
+          <HStack gap={1} align="center">
+            {isBusy && <Spinner size="sm" />}
+            <span onPointerDown={e => e.stopPropagation()}>
+              <MoreMenu
+                label={`${node.title} actions`}
+                size="sm"
+                items={[
+                  {label: 'Clear', icon: Eraser, onClick: onClear},
+                  {label: 'Rename', icon: Pencil, onClick: openRenameDialog},
+                  {
+                    label: node.isLocked ? 'Unlock' : 'Lock',
+                    icon: node.isLocked ? LockOpen : Lock,
+                    onClick: onToggleLock,
+                  },
+                  {type: 'divider'},
+                  {label: 'Delete', icon: Trash2, onClick: onDelete},
+                ]}
+              />
+            </span>
+          </HStack>
         </HStack>
-      )}
+
+        {/* ------------------------------------------------------------- body */}
+        {isTextNode ? (
+          <div style={{padding: 'var(--spacing-2)', maxBlockSize: 180, overflow: 'hidden'}}>
+            <Text type="supporting" color="secondary" maxLines={9}>
+              {node.text}
+            </Text>
+          </div>
+        ) : previewUrl ? (
+          <div style={{position: 'relative', lineHeight: 0}}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- data-URI placeholder */}
+            <img
+              src={previewUrl}
+              alt={referenceImage && !node.result ? `${node.title} image` : `${node.title} output`}
+              draggable={false}
+              style={{
+                inlineSize: '100%',
+                aspectRatio:
+                  node.result?.width && node.result.height
+                    ? `${node.result.width} / ${node.result.height}`
+                    : referenceImage
+                      ? '16 / 10'
+                      : '1 / 1',
+                objectFit: 'cover',
+                display: 'block',
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              blockSize: 96,
+              display: 'grid',
+              placeItems: 'center',
+              padding: 'var(--spacing-2)',
+              backgroundColor: 'var(--color-background-muted)',
+            }}>
+            {node.status === 'error' ? (
+              <Text type="supporting" color="primary" maxLines={4} style={{color: 'var(--color-error)'}}>
+                {node.error ?? 'Run failed'}
+              </Text>
+            ) : (
+              <Text type="supporting" color="disabled">
+                {isBusy ? 'Generating…' : 'No output yet'}
+              </Text>
+            )}
+          </div>
+        )}
+
+        {/* ----------------------------------------------------------- footer */}
+        {/* Only model-backed nodes can run. Brand nodes (Style Kit, Format,
+            Product Asset) carry constraints, so offering them a Run button
+            promises something that would silently do nothing. */}
+        {!isTextNode && isExecutableNode(node) && (
+          <HStack
+            gap={1}
+            align="center"
+            justify="between"
+            padding={1}
+            style={{borderBlockStart: '1px solid var(--color-border)'}}>
+            {node.cost > 0 ? (
+              <HStack gap={0.5} align="center">
+                <Icon icon={Sparkles} size="xsm" color="secondary" />
+                <Text type="supporting" color="secondary">
+                  {node.cost}
+                </Text>
+              </HStack>
+            ) : (
+              <span />
+            )}
+            <button
+              type="button"
+              // The card itself starts a drag on pointerdown, so the button has to
+              // claim the event before it bubbles.
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => {
+                e.stopPropagation();
+                onRun();
+              }}
+              disabled={isBusy}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--spacing-0-5)',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: isBusy ? 'progress' : 'pointer',
+                color: 'inherit',
+              }}>
+              <Icon icon={Play} size="xsm" color={isBusy ? 'disabled' : 'accent'} />
+              <Text type="supporting" color={isBusy ? 'disabled' : 'accent'}>
+                {isBusy ? 'Running…' : 'Run'}
+              </Text>
+            </button>
+          </HStack>
+        )}
+      </div>
 
       {/* --------------------------------------------------------------- ports */}
       {node.inputs.map((port, i) => (
@@ -206,7 +255,54 @@ export function NodeCard({
           onPointerDown={e => onOutputPointerDown(e, port.id, port.type)}
         />
       ))}
-    </div>
+      </div>
+      {renameDialog.element}
+    </>
+  );
+}
+
+function RenameNodeDialog({
+  initialTitle,
+  onRename,
+  onClose,
+}: {
+  initialTitle: string;
+  onRename: (title: string) => void;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState(initialTitle);
+  const trimmedTitle = title.trim();
+
+  const save = () => {
+    if (!trimmedTitle) return;
+    onRename(trimmedTitle);
+    onClose();
+  };
+
+  return (
+    <Layout
+      header={<DialogHeader title="Rename node" onOpenChange={onClose} />}
+      content={
+        <LayoutContent>
+          <TextInput
+            label="Node name"
+            value={title}
+            onChange={setTitle}
+            hasAutoFocus
+            isRequired
+            width="100%"
+          />
+        </LayoutContent>
+      }
+      footer={
+        <LayoutFooter>
+          <HStack gap={2} justify="end">
+            <Button label="Cancel" variant="secondary" onClick={onClose} />
+            <Button label="Rename" variant="primary" isDisabled={!trimmedTitle} onClick={save} />
+          </HStack>
+        </LayoutFooter>
+      }
+    />
   );
 }
 

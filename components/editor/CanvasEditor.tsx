@@ -132,8 +132,44 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
 
   // ------------------------------------------------------------ graph edits
   const moveNode = useCallback((id: string, x: number, y: number) => {
-    updateNodes(current => current.map(n => (n.id === id ? {...n, x, y} : n)));
+    updateNodes(current => current.map(n => (n.id === id && !n.isLocked ? {...n, x, y} : n)));
   }, [updateNodes]);
+
+  const clearNode = useCallback((id: string) => {
+    updateNodes(current =>
+      current.map(node => {
+        if (node.id !== id) return node;
+        const def = getNodeDef(node.type);
+        return {
+          ...node,
+          status: 'idle',
+          params: def ? defaultParams(def) : node.params,
+          text: node.type === 'prompt' ? '' : undefined,
+          result: undefined,
+          provenance: undefined,
+          error: undefined,
+        };
+      }),
+    );
+  }, [updateNodes]);
+
+  const renameNode = useCallback((id: string, title: string) => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+    updateNodes(current => current.map(node => (node.id === id ? {...node, title: trimmedTitle} : node)));
+  }, [updateNodes]);
+
+  const toggleNodeLock = useCallback((id: string) => {
+    updateNodes(current =>
+      current.map(node => (node.id === id ? {...node, isLocked: !node.isLocked} : node)),
+    );
+  }, [updateNodes]);
+
+  const deleteNode = useCallback((id: string) => {
+    updateNodes(current => current.filter(node => node.id !== id));
+    updateEdges(current => current.filter(edge => edge.fromNode !== id && edge.toNode !== id));
+    setSelectedIds(current => current.filter(selectedId => selectedId !== id));
+  }, [updateEdges, updateNodes]);
 
   const connect = useCallback((edge: Omit<Edge, 'id'>) => {
     updateEdges(current => [...current, {...edge, id: `e-${crypto.randomUUID().slice(0, 8)}`}]);
@@ -486,6 +522,10 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
             onViewportChange={handleViewportChange}
             onSelectionChange={setSelectedIds}
             onNodeMove={moveNode}
+            onNodeClear={clearNode}
+            onNodeRename={renameNode}
+            onNodeLockToggle={toggleNodeLock}
+            onNodeDelete={deleteNode}
             onConnect={connect}
             onEdgeDelete={deleteEdge}
             onRunNode={runNode}
