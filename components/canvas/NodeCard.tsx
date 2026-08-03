@@ -13,6 +13,9 @@ import type {Port, PegNode} from '@/lib/types';
 
 import {NODE_HEADER_HEIGHT} from './node-metrics';
 
+/** Transparent grab/drop area around each port dot. */
+const HIT_SIZE = 24;
+
 interface Props {
   node: PegNode;
   isSelected: boolean;
@@ -21,7 +24,6 @@ interface Props {
   pendingType?: string;
   onHeaderPointerDown: (e: React.PointerEvent) => void;
   onOutputPointerDown: (e: React.PointerEvent, portId: string, type: string) => void;
-  onInputPointerUp: (portId: string) => void;
   onRun: () => void;
 }
 
@@ -40,7 +42,6 @@ export function NodeCard({
   pendingType,
   onHeaderPointerDown,
   onOutputPointerDown,
-  onInputPointerUp,
   onRun,
 }: Props) {
   const ring = isSelected ? 'var(--color-accent)' : STATUS_RING[node.status];
@@ -193,7 +194,6 @@ export function NodeCard({
           side="input"
           index={i}
           isTarget={pendingType === port.type}
-          onPointerUp={() => onInputPointerUp(port.id)}
         />
       ))}
       {node.outputs.map((port, i) => (
@@ -217,7 +217,6 @@ function PortDot({
   index,
   isTarget,
   onPointerDown,
-  onPointerUp,
 }: {
   nodeId: string;
   port: Port;
@@ -225,9 +224,13 @@ function PortDot({
   index: number;
   isTarget?: boolean;
   onPointerDown?: (e: React.PointerEvent) => void;
-  onPointerUp?: () => void;
 }) {
   const color = PORT_TYPE_COLOR[port.type] ?? 'var(--color-border-emphasized)';
+  // The visible dot is 10px, but a 10px drop target is close to unhittable once
+  // the canvas is zoomed out — so the hit area is HIT_SIZE and transparent, and
+  // the dot is drawn inside it. The data attributes live on the hit area
+  // because that is what elementFromPoint will find on release.
+  const inset = -(HIT_SIZE / 2);
   return (
     <span
       title={`${port.name} (${port.type})`}
@@ -236,20 +239,34 @@ function PortDot({
       data-port-side={side}
       // Stop propagation either way so grabbing a port never drags the node.
       onPointerDown={onPointerDown ?? (e => e.stopPropagation())}
-      onPointerUp={onPointerUp}
       style={{
         position: 'absolute',
-        [side === 'input' ? 'insetInlineStart' : 'insetInlineEnd']: -5,
-        insetBlockStart: PORT_TOP_OFFSET + index * PORT_SPACING - 5,
-        inlineSize: 10,
-        blockSize: 10,
-        borderRadius: '50%',
-        backgroundColor: isTarget ? color : 'var(--color-background-card)',
-        border: `2px solid ${color}`,
-        // color-mix, not `${color}33` — appending alpha hex to a var() is invalid CSS.
-        boxShadow: isTarget ? `0 0 0 4px color-mix(in srgb, ${color} 30%, transparent)` : undefined,
+        [side === 'input' ? 'insetInlineStart' : 'insetInlineEnd']: inset,
+        insetBlockStart: PORT_TOP_OFFSET + index * PORT_SPACING - HIT_SIZE / 2,
+        inlineSize: HIT_SIZE,
+        blockSize: HIT_SIZE,
+        display: 'grid',
+        placeItems: 'center',
+        // Above the card's own content, so a port is grabbable as well as
+        // droppable. The drop path does not rely on this, but the grab does.
+        zIndex: 1,
         cursor: side === 'output' ? 'crosshair' : 'pointer',
-      }}
-    />
+      }}>
+      <span
+        style={{
+          inlineSize: 10,
+          blockSize: 10,
+          borderRadius: '50%',
+          backgroundColor: isTarget ? color : 'var(--color-background-card)',
+          border: `2px solid ${color}`,
+          // color-mix, not `${color}33` — appending alpha hex to a var() is invalid CSS.
+          boxShadow: isTarget
+            ? `0 0 0 4px color-mix(in srgb, ${color} 30%, transparent)`
+            : undefined,
+          // The dot must never swallow the release; only the hit area is tested.
+          pointerEvents: 'none',
+        }}
+      />
+    </span>
   );
 }

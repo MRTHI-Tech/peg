@@ -104,7 +104,17 @@ export function NodeCanvas({
   const handlePointerUp = (e: React.PointerEvent) => {
     panRef.current = null;
     dragRef.current = null;
-    if (pending) setPending(null);
+
+    // Dropping a connection has to be resolved by hit-testing, not by letting
+    // the port handle its own pointerup. Starting a drag captures the pointer on
+    // the canvas root, and a captured pointer retargets every later event to the
+    // capturing element — so the port never receives the release, and the
+    // connection silently evaporated.
+    if (pending) {
+      dropConnection(e.clientX, e.clientY);
+      setPending(null);
+    }
+
     if ((e.currentTarget as HTMLElement).hasPointerCapture?.(e.pointerId)) {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     }
@@ -155,6 +165,24 @@ export function NodeCanvas({
     e.stopPropagation();
     setPending({fromNode: node.id, fromPort: portId, type, to: pointerWorld(e)});
     (e.currentTarget as HTMLElement).closest('[data-canvas-root]')?.setPointerCapture?.(e.pointerId);
+  };
+
+  /** Find the input port under the pointer and connect to it, if any. */
+  const dropConnection = (clientX: number, clientY: number) => {
+    // elementsFromPoint, not elementFromPoint: the port dot is absolutely
+    // positioned inside the node card with no z-index, so card content paints
+    // over it and the topmost element at the drop point is never the port.
+    // Walking the whole hit stack avoids depending on the card's paint order.
+    const hit = document
+      .elementsFromPoint(clientX, clientY)
+      .map(el => (el as HTMLElement).closest?.('[data-port-side="input"]'))
+      .find(Boolean) as HTMLElement | undefined;
+    if (!hit) return;
+    const nodeId = hit.dataset.nodeId;
+    const portId = hit.dataset.portId;
+    if (!nodeId || !portId) return;
+    const target = nodeById(nodeId);
+    if (target) completeConnection(target, portId);
   };
 
   const completeConnection = (targetNode: PegNode, portId: string) => {
@@ -294,7 +322,6 @@ export function NodeCanvas({
             pendingType={pending?.type}
             onHeaderPointerDown={e => startNodeDrag(e, node)}
             onOutputPointerDown={(e, portId, type) => startConnection(e, node, portId, type)}
-            onInputPointerUp={portId => completeConnection(node, portId)}
             onRun={() => onRunNode(node)}
           />
         ))}
