@@ -5,14 +5,12 @@ import {HStack, VStack} from '@astryxdesign/core/Stack';
 import {Heading, Text} from '@astryxdesign/core/Text';
 import {Button} from '@astryxdesign/core/Button';
 import {Divider} from '@astryxdesign/core/Divider';
-import {EmptyState} from '@astryxdesign/core/EmptyState';
-import {Icon} from '@astryxdesign/core/Icon';
-import {CloudOff, Sparkles} from 'lucide-react';
 
 import {BrandGateBanner} from '@/components/brand/BrandGateBanner';
 import {PegLogo} from '@/components/brand/PegLogo';
 import {AccountControls} from '@/components/chrome/AccountControls';
 import {CreditsPill} from '@/components/chrome/CreditsPill';
+import {GalleryEmptyState} from '@/components/gallery/GalleryEmptyState';
 import {GenerationCard} from '@/components/gallery/GenerationCard';
 import {TemplateCard} from '@/components/gallery/TemplateCard';
 import {listGenerations} from '@/lib/generations';
@@ -72,8 +70,8 @@ export default async function GalleryPage() {
             Projects
           </Heading>
           <Text type="supporting">
-            Brand-locked key visuals, composed for every breakpoint. Each run writes its asset and signed
-            lineage to storage.
+            Brand-locked key visuals, composed for every breakpoint. Each run writes its asset and
+            signed lineage to storage.
           </Text>
         </VStack>
 
@@ -101,26 +99,10 @@ export default async function GalleryPage() {
               </Text>
             )}
           </HStack>
-          {!reachable ? (
-            /* Never claim the workspace is empty when storage did not answer —
-               on the free tier a cold service looks exactly like a new one. */
-            <EmptyState
-              title="Couldn't reach your storage"
-              description="The generation service may still be waking up, which takes up to a minute on the free tier. Reload in a moment."
-              icon={<Icon icon={CloudOff} size="lg" />}
-            />
-          ) : generations.length === 0 ? (
-            <EmptyState
-              title="Nothing generated yet"
-              description="Start from a template above, or open a blank canvas. Everything you make lands here with its signed lineage."
-              icon={<Icon icon={Sparkles} size="lg" />}
-              actions={
-                <Button
-                  label="New project"
-                  variant="primary"
-                  href={`/project/${NEW_WORKFLOW_ID}`}
-                />
-              }
+          {!reachable || generations.length === 0 ? (
+            <GalleryEmptyState
+              reachable={reachable}
+              newProjectHref={`/project/${NEW_WORKFLOW_ID}`}
             />
           ) : (
             <Grid columns={{minWidth: 280, repeat: 'fit'}} gap={4}>
