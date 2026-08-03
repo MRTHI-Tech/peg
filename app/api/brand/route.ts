@@ -1,13 +1,17 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_HEADERS, SERVICE_URL} from '@/lib/service-config';
+import {SERVICE_URL, serviceHeaders} from '@/lib/service-config';
+import {canEditBrand, currentWorkspace, forbidden, unauthorized} from '@/lib/workspace';
 
 /** Read the workspace brand. Empty on first run rather than a 404. */
 export async function GET() {
+  const workspace = await currentWorkspace();
+  if (!workspace) return unauthorized();
+
   try {
     const upstream = await fetch(`${SERVICE_URL}/brand`, {
       cache: 'no-store',
-      headers: SERVICE_HEADERS,
+      headers: serviceHeaders(workspace),
       signal: AbortSignal.timeout(20_000),
     });
     const data = await upstream.json().catch(() => null);
@@ -34,10 +38,14 @@ export async function PUT(request: Request) {
     return NextResponse.json({error: 'invalid JSON body'}, {status: 400});
   }
 
+  const workspace = await currentWorkspace();
+  if (!workspace) return unauthorized();
+  if (!(await canEditBrand())) return forbidden();
+
   try {
     const upstream = await fetch(`${SERVICE_URL}/brand`, {
       method: 'PUT',
-      headers: SERVICE_HEADERS,
+      headers: serviceHeaders(workspace),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30_000),
     });

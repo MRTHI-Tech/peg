@@ -69,3 +69,11 @@ services:
           name: peg-service
           type: web
           envVarKey: PEG_SERVICE_TOKEN
+      # Clerk. Keyless mode covers local development only — a deployed build
+      # needs real keys, entered once in the Render dashboard. Organizations
+      # must be enabled in Clerk: a workspace is an org, and the brand kit
+      # belongs to it.
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false

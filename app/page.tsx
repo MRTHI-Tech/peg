@@ -1,3 +1,5 @@
+import {auth} from '@clerk/nextjs/server';
+
 import {AppShell} from '@astryxdesign/core/AppShell';
 import {TopNav} from '@astryxdesign/core/TopNav';
 import {Grid} from '@astryxdesign/core/Grid';
@@ -5,13 +7,17 @@ import {HStack, VStack} from '@astryxdesign/core/Stack';
 import {Heading, Text} from '@astryxdesign/core/Text';
 import {Button} from '@astryxdesign/core/Button';
 import {Divider} from '@astryxdesign/core/Divider';
+import {EmptyState} from '@astryxdesign/core/EmptyState';
+import {Icon} from '@astryxdesign/core/Icon';
+import {Sparkles} from 'lucide-react';
 
 import {BrandGateBanner} from '@/components/brand/BrandGateBanner';
 import {PegLogo} from '@/components/brand/PegLogo';
+import {AccountControls} from '@/components/chrome/AccountControls';
 import {CreditsPill} from '@/components/chrome/CreditsPill';
-import {WorkflowCard} from '@/components/gallery/WorkflowCard';
+import {GenerationCard} from '@/components/gallery/GenerationCard';
 import {TemplateCard} from '@/components/gallery/TemplateCard';
-import {listWorkflows} from '@/lib/workflow-service';
+import {listGenerations} from '@/lib/generations';
 import {NEW_WORKFLOW_ID, TEMPLATES} from '@/lib/mock-data';
 
 /**
@@ -21,8 +27,13 @@ import {NEW_WORKFLOW_ID, TEMPLATES} from '@/lib/mock-data';
  * `astryx docs layout`. Cards are the right container here (self-contained
  * gallery entries), unlike the dense rows used for tabular data.
  */
-export default function GalleryPage() {
-  const workflows = listWorkflows();
+export default async function GalleryPage() {
+  // Protection sits with the resource, not a middleware matcher.
+  await auth.protect();
+
+  // Real storage, not fixtures: a workspace that has generated nothing shows
+  // nothing, which is the whole point of the empty state.
+  const generations = await listGenerations();
 
   return (
     <AppShell
@@ -43,6 +54,7 @@ export default function GalleryPage() {
             <HStack gap={2} align="center">
               <Button label="Brand kit" variant="ghost" size="sm" href="/brand" />
               <CreditsPill />
+              <AccountControls />
               <Button
                 label="New project"
                 variant="primary"
@@ -81,14 +93,33 @@ export default function GalleryPage() {
 
         <VStack gap={3}>
           <HStack justify="between" align="center">
-            <Heading level={2}>Recent projects</Heading>
-            <Text type="supporting">{workflows.length} projects</Text>
+            <Heading level={2}>Recent work</Heading>
+            {generations.length > 0 && (
+              <Text type="supporting">
+                {generations.length} {generations.length === 1 ? 'generation' : 'generations'}
+              </Text>
+            )}
           </HStack>
-          <Grid columns={{minWidth: 280, repeat: 'fit'}} gap={4}>
-            {workflows.map(workflow => (
-              <WorkflowCard key={workflow.id} workflow={workflow} />
-            ))}
-          </Grid>
+          {generations.length === 0 ? (
+            <EmptyState
+              title="Nothing generated yet"
+              description="Start from a template above, or open a blank canvas. Everything you make lands here with its signed lineage."
+              icon={<Icon icon={Sparkles} size="lg" />}
+              actions={
+                <Button
+                  label="New project"
+                  variant="primary"
+                  href={`/project/${NEW_WORKFLOW_ID}`}
+                />
+              }
+            />
+          ) : (
+            <Grid columns={{minWidth: 280, repeat: 'fit'}} gap={4}>
+              {generations.map(generation => (
+                <GenerationCard key={generation.run_id} generation={generation} />
+              ))}
+            </Grid>
+          )}
         </VStack>
       </VStack>
     </AppShell>

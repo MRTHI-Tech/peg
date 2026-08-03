@@ -1,6 +1,7 @@
 import {NextResponse} from 'next/server';
 
-import {SERVICE_HEADERS, SERVICE_URL} from '@/lib/service-config';
+import {SERVICE_URL, serviceHeaders} from '@/lib/service-config';
+import {currentWorkspace, unauthorized} from '@/lib/workspace';
 
 /**
  * Submit a generation run.
@@ -17,10 +18,13 @@ export async function POST(request: Request) {
     return NextResponse.json({error: 'invalid JSON body'}, {status: 400});
   }
 
+  const workspace = await currentWorkspace();
+  if (!workspace) return unauthorized();
+
   try {
     const upstream = await fetch(`${SERVICE_URL}/runs`, {
       method: 'POST',
-      headers: SERVICE_HEADERS,
+      headers: serviceHeaders(workspace),
       body: JSON.stringify(body),
       // Submission returns immediately; the long work happens behind polling.
       signal: AbortSignal.timeout(30_000),

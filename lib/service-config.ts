@@ -21,3 +21,14 @@ export const SERVICE_HEADERS: Record<string, string> = {
   'Content-Type': 'application/json',
   ...(TOKEN ? {'X-PEG-Token': TOKEN} : {}),
 };
+
+/**
+ * Headers for a request acting on one workspace's data.
+ *
+ * The workspace travels as a header rather than in the body so it can never be
+ * confused with something the browser composed — the browser never sees it, and
+ * the service refuses any request that arrives without one.
+ */
+export function serviceHeaders(workspace: string): Record<string, string> {
+  return {...SERVICE_HEADERS, 'X-PEG-Workspace': workspace};
+}

@@ -80,22 +80,36 @@ class ProvenanceOut(BaseModel):
     created_at: str | None = None
 
 
+AssetKind = Literal["style", "logo", "screenshot", "product", "other"]
+
+
 class BrandAssetIn(BaseModel):
     """One uploaded brand file, base64-encoded.
 
-    `is_logo` routes it: logos are composited on top of a plate and must never
-    condition generation, because a logo used as a style reference produces
-    garbled logo-like shapes.
+    `kind` routes it. Only `style` conditions generation; everything else is
+    composited on top of a finished plate and must never be used as a style
+    reference, because a logo fed in that way produces garbled logo-like shapes.
     """
 
     filename: str = Field(max_length=200)
     content_type: str = Field(default="image/png", max_length=100)
     data_b64: str
-    is_logo: bool = False
+    kind: AssetKind = "logo"
+
+
+class AssetKindIn(BaseModel):
+    """Relabel an already-uploaded composite. `style` is not reachable — the two
+    lanes are separated on purpose and a file crosses them by being re-uploaded."""
+
+    asset_key: str
+    kind: Literal["logo", "screenshot", "product", "other"]
 
 
 class TypographyIn(BaseModel):
-    """Captured for the live-text layer. Never sent to a model."""
+    """Captured for the live-text layer. Never sent to a model.
+
+    Values are classifications, not typeface names — see brand.TYPE_CLASSES.
+    """
 
     heading: str = ""
     body: str = ""
@@ -103,11 +117,16 @@ class TypographyIn(BaseModel):
 
 
 class BrandIn(BaseModel):
+    """The editable half of a brand.
+
+    Assets and the palette derived from them are owned by /brand/assets and are
+    deliberately absent here: a save carries only what the form can change.
+
+    `description` is absent for a different reason — the form no longer asks for
+    it, so accepting it would let an empty default silently erase a stored look.
+    """
+
     name: str = ""
-    description: str = ""
-    palette: list[str] = Field(default_factory=list)
-    style_references: list[dict] = Field(default_factory=list)
-    logos: list[dict] = Field(default_factory=list)
     typography: TypographyIn = Field(default_factory=TypographyIn)
 
 

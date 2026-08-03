@@ -38,6 +38,20 @@ from schemas import AssetOut, FormatSpec, ProvenanceOut, RunRequest
 load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
 
 PREFIX = "peg"
+
+
+def workspace_prefix(workspace: str) -> str:
+    """Where one workspace's objects live.
+
+    Everything a workspace owns hangs off this, which is what makes a fresh
+    sign-in an empty state with no first-run handling anywhere: the prefix simply
+    has nothing under it yet.
+    """
+    if not workspace or "/" in workspace:
+        raise ValueError(f"invalid workspace id: {workspace!r}")
+    return f"{PREFIX}/workspaces/{workspace}"
+
+
 MAX_ATTEMPTS = 3
 PRESIGN_TTL = 60 * 60 * 12
 OUTPAINT_MODEL = "bria-genfill"
@@ -94,14 +108,16 @@ def presign(key: str, ttl: int = PRESIGN_TTL) -> str:
     )
 
 
-def _sink() -> ObjectStorageSink:
+def _sink(workspace: str) -> ObjectStorageSink:
     backend = S3StorageBackend.for_backblaze(
         _bucket(),
         region=os.environ["B2_REGION"],
         key_id=os.environ["B2_KEY_ID"],
         app_key=os.environ["B2_APP_KEY"],
     )
-    return ObjectStorageSink(backend, prefix=PREFIX, key_strategy=KeyStrategy.HIERARCHICAL)
+    return ObjectStorageSink(
+        backend, prefix=workspace_prefix(workspace), key_strategy=KeyStrategy.HIERARCHICAL
+    )
 
 
 def _provider() -> GMICloudImageProvider:
@@ -112,7 +128,46 @@ def fetch_object(key: str) -> bytes:
     return _s3().get_object(Bucket=_bucket(), Key=key)["Body"].read()
 
 
-def _collect_run_output(run_id: str) -> tuple[AssetOut, ProvenanceOut]:
+def list_runs(workspace: str, limit: int = 60) -> list[dict]:
+    """Every generation this workspace has produced, newest first.
+
+    B2 has no query capability, but listing by prefix does work — and because a
+    workspace owns its whole prefix, "what has this team made" is one list call.
+    A workspace that has generated nothing lists nothing, which is what makes the
+    gallery honestly empty rather than empty by special case.
+
+    Manifests are deliberately not opened: that would be one GET per run to
+    render a grid of thumbnails.
+    """
+    prefix = f"{workspace_prefix(workspace)}/runs/"
+    paginator = _s3().get_paginator("list_objects_v2")
+
+    runs: dict[str, dict] = {}
+    for page in paginator.paginate(Bucket=_bucket(), Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rest = key[len(prefix) :].split("/")
+            # <date>/<run_id>/assets/<file>
+            if len(rest) < 4 or rest[2] != "assets":
+                continue
+            date, run_id = rest[0], rest[1]
+            entry = runs.setdefault(
+                run_id,
+                {"run_id": run_id, "created_at": date, "asset_key": key, "asset_count": 0},
+            )
+            entry["asset_count"] += 1
+            # Newest asset in the run wins the thumbnail.
+            if obj["LastModified"].isoformat() > entry.get("modified", ""):
+                entry["modified"] = obj["LastModified"].isoformat()
+                entry["asset_key"] = key
+
+    ordered = sorted(runs.values(), key=lambda r: r.get("modified", ""), reverse=True)[:limit]
+    for entry in ordered:
+        entry["url"] = presign(entry["asset_key"])
+    return ordered
+
+
+def _collect_run_output(run_id: str, workspace: str) -> tuple[AssetOut, ProvenanceOut]:
     """Find what a run actually stored. Raises if nothing landed.
 
     Genblaze reports success even when the transfer failed, so this is the real
@@ -121,7 +176,9 @@ def _collect_run_output(run_id: str) -> tuple[AssetOut, ProvenanceOut]:
     s3, bucket = _s3(), _bucket()
     keys = [
         o["Key"]
-        for o in s3.list_objects_v2(Bucket=bucket, Prefix=f"{PREFIX}/runs/").get("Contents", [])
+        for o in s3.list_objects_v2(
+            Bucket=bucket, Prefix=f"{workspace_prefix(workspace)}/runs/"
+        ).get("Contents", [])
         if run_id in o["Key"]
     ]
     assets = [k for k in keys if "/assets/" in k]
@@ -201,7 +258,7 @@ def _verify_manifest(key: str, raw: bytes) -> bool | None:
     return False
 
 
-def _submit(model: str, prompt: str, params: dict) -> tuple[str, int]:
+def _submit(model: str, prompt: str, params: dict, workspace: str) -> tuple[str, int]:
     """Run one step with retry. Returns (run_id, attempts_used)."""
     last: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -215,7 +272,7 @@ def _submit(model: str, prompt: str, params: dict) -> tuple[str, int]:
                     modality=Modality.IMAGE,
                     params=params,
                 )
-                .run(sink=_sink(), timeout=420, raise_on_failure=True)
+                .run(sink=_sink(workspace), timeout=420, raise_on_failure=True)
             )
             run = getattr(result, "run", result)
             return str(getattr(run, "run_id", "")), attempt
@@ -233,15 +290,15 @@ def _submit(model: str, prompt: str, params: dict) -> tuple[str, int]:
 # ------------------------------------------------------------------ operations
 
 
-def run_generate(req: RunRequest) -> RunOutcome:
+def run_generate(req: RunRequest, workspace: str) -> RunOutcome:
     params: dict = dict(req.params)
     if req.negative_prompt:
         params["negative_prompt"] = req.negative_prompt
     if req.image_b64:
         params["image"] = req.image_b64
 
-    run_id, attempts = _submit(req.model, req.prompt, params)
-    asset, prov = _collect_run_output(run_id)
+    run_id, attempts = _submit(req.model, req.prompt, params, workspace)
+    asset, prov = _collect_run_output(run_id, workspace)
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 
@@ -325,7 +382,7 @@ def _compose_for_format(source: Image.Image, fmt: FormatSpec) -> tuple[bytes, by
     return cbuf.getvalue(), mbuf.getvalue()
 
 
-def run_outpaint(req: RunRequest) -> RunOutcome:
+def run_outpaint(req: RunRequest, workspace: str) -> RunOutcome:
     if req.format is None:
         raise RunFailed("outpaint requires a format")
 
@@ -357,8 +414,8 @@ def run_outpaint(req: RunRequest) -> RunOutcome:
         prompt = f"{prompt} Additional background-only direction: {req.prompt}"
 
     # Bria Genfill is the only model proven to honour the image/mask recipe.
-    run_id, attempts = _submit(OUTPAINT_MODEL, prompt, params)
-    asset, prov = _collect_run_output(run_id)
+    run_id, attempts = _submit(OUTPAINT_MODEL, prompt, params, workspace)
+    asset, prov = _collect_run_output(run_id, workspace)
     if (asset.width, asset.height) != (req.format.width, req.format.height):
         raise RunFailed(
             f"outpaint returned {asset.width}x{asset.height}; expected "
@@ -367,8 +424,8 @@ def run_outpaint(req: RunRequest) -> RunOutcome:
     return RunOutcome(run_id=run_id, attempts=attempts, asset=asset, provenance=prov)
 
 
-def _brand_locked(prompt: str) -> str:
-    """Prepend the workspace brand to a prompt.
+def _brand_locked(prompt: str, workspace: str) -> str:
+    """Prepend the workspace's own brand to a prompt.
 
     Applied here rather than in the browser so it cannot be bypassed and so it
     covers every operation uniformly. Text conditioning is used because it is the
@@ -380,7 +437,7 @@ def _brand_locked(prompt: str) -> str:
     try:
         import brand as brand_module
 
-        prefix = brand_module.load_brand().prompt_prefix().strip()
+        prefix = brand_module.load_brand(workspace).prompt_prefix().strip()
     except Exception:  # noqa: BLE001 — never fail a run over the brand document
         return prompt
 
@@ -389,8 +446,8 @@ def _brand_locked(prompt: str) -> str:
     return f"{prefix} {prompt}".strip() if prompt.strip() else prefix
 
 
-def execute(req: RunRequest) -> RunOutcome:
-    req = req.model_copy(update={"prompt": _brand_locked(req.prompt)})
+def execute(req: RunRequest, workspace: str) -> RunOutcome:
+    req = req.model_copy(update={"prompt": _brand_locked(req.prompt, workspace)})
     if req.operation == "outpaint":
-        return run_outpaint(req)
-    return run_generate(req)
+        return run_outpaint(req, workspace)
+    return run_generate(req, workspace)

@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import brand
 import runner
-from schemas import BrandAssetIn, BrandIn, RunRequest, RunResponse, RunStatus
+from schemas import AssetKindIn, BrandAssetIn, BrandIn, RunRequest, RunResponse, RunStatus
 
 # In-memory job store. Fine for a single instance; if this ever runs replicated,
 # move it to Redis or the B2 manifest index.
@@ -55,19 +55,19 @@ app = FastAPI(title="PEG generation service", version="0.1.0", lifespan=lifespan
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o for o in os.environ.get("PEG_ALLOWED_ORIGINS", "*").split(",") if o],
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
 
-async def _execute(job_id: str, req: RunRequest) -> None:
+async def _execute(job_id: str, req: RunRequest, workspace: str) -> None:
     async with _SEMAPHORE:
         async with _LOCK:
             _JOBS[job_id].status = RunStatus.running
 
         try:
             # Genblaze blocks; keep it off the event loop.
-            outcome = await asyncio.to_thread(runner.execute, req)
+            outcome = await asyncio.to_thread(runner.execute, req, workspace)
         except Exception as exc:  # noqa: BLE001 — surface the real cause to the UI
             async with _LOCK:
                 job = _JOBS[job_id]
@@ -100,6 +100,25 @@ def require_token(x_peg_token: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing service token")
 
 
+def require_workspace(x_peg_workspace: str | None = Header(default=None)) -> str:
+    """Whose data this request touches.
+
+    Resolved by peg-web from the Clerk session and passed on; this service never
+    talks to Clerk. It is a header rather than a body field so it cannot be
+    confused with anything the browser composed.
+
+    Note this trusts peg-web. Anyone holding PEG_SERVICE_TOKEN could name any
+    workspace directly — acceptable while the token is ours alone, and the fix
+    is for this service to verify the Clerk token itself.
+    """
+    workspace = (x_peg_workspace or "").strip()
+    if not workspace:
+        raise HTTPException(status_code=400, detail="missing workspace")
+    if "/" in workspace:
+        raise HTTPException(status_code=400, detail="invalid workspace")
+    return workspace
+
+
 @app.get("/health")
 async def health() -> dict:
     async with _LOCK:
@@ -108,35 +127,40 @@ async def health() -> dict:
 
 
 @app.get("/brand")
-async def get_brand(_: None = Depends(require_token)) -> dict:
+async def get_brand(
+    workspace: str = Depends(require_workspace), _: None = Depends(require_token)
+) -> dict:
     """The workspace brand. A first-run workspace returns an empty one, not 404."""
-    b = await asyncio.to_thread(brand.load_brand)
+    b = await asyncio.to_thread(brand.load_brand, workspace)
     return {**asdict(b), "is_complete": b.is_complete()}
 
 
 @app.put("/brand")
-async def put_brand(payload: BrandIn, _: None = Depends(require_token)) -> dict:
+async def put_brand(
+    payload: BrandIn,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
     def _save() -> None:
-        current = brand.load_brand()
+        current = brand.load_brand(workspace)
         current.name = payload.name
-        current.description = payload.description
-        current.palette = payload.palette
         current.typography = brand.Typography(**payload.typography.model_dump())
-        # Assets are added via /brand/assets; this accepts the surviving set so
-        # removals persist, but never trusts the client's presigned URLs.
-        current.style_references = [
-            brand.BrandAsset(**{**a, "url": ""}) for a in payload.style_references
-        ]
-        current.logos = [brand.BrandAsset(**{**a, "url": ""}) for a in payload.logos]
-        brand.save_brand(current)
+        # Assets are owned by /brand/assets. A save only carries the text fields,
+        # so an in-flight upload from another tab is not clobbered by a stale
+        # client copy of the asset lists.
+        brand.save_brand(workspace, current)
 
     await asyncio.to_thread(_save)
-    fresh = await asyncio.to_thread(brand.load_brand)
+    fresh = await asyncio.to_thread(brand.load_brand, workspace)
     return {**asdict(fresh), "is_complete": fresh.is_complete()}
 
 
 @app.post("/brand/assets", status_code=201)
-async def add_brand_asset(payload: BrandAssetIn, _: None = Depends(require_token)) -> dict:
+async def add_brand_asset(
+    payload: BrandAssetIn,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
     """Store one asset and, for style references, extract its palette.
 
     Palette extraction is deterministic and model-free, so it happens inline
@@ -145,24 +169,33 @@ async def add_brand_asset(payload: BrandAssetIn, _: None = Depends(require_token
 
     def _add() -> dict:
         asset = brand.upload_asset(
+            workspace,
             payload.data_b64,
             payload.filename,
             payload.content_type,
-            is_logo=payload.is_logo,
+            kind=payload.kind,
         )
-        current = brand.load_brand()
-        if payload.is_logo:
-            current.logos.append(asset)
-            palette: list[str] = []
+        current = brand.load_brand(workspace)
+        palette: list[str] = []
+        if payload.kind != brand.STYLE_KIND:
+            current.composites.append(asset)
         else:
+            if not brand.is_svg(payload.filename, payload.content_type):
+                palette = brand.extract_palette(base64.b64decode(payload.data_b64))
+            # Recorded on the asset so a later removal can take these colours
+            # back out; the brand-wide list is the merge of all of them.
+            asset.palette = palette
             current.style_references.append(asset)
-            palette = brand.extract_palette(base64.b64decode(payload.data_b64))
-            # Merge rather than replace: a second reference adds to the palette.
-            for value in palette:
-                if value not in current.palette:
-                    current.palette.append(value)
-        brand.save_brand(current)
-        return {"asset": asdict(asset), "extracted_palette": palette}
+            # Not a plain merge: references saved before palettes were recorded
+            # per asset contribute nothing until backfilled, and would otherwise
+            # silently drop their colours the moment a second reference lands.
+            brand.recompute_palette(current)
+        brand.save_brand(workspace, current)
+        return {
+            "asset": asdict(asset),
+            "extracted_palette": palette,
+            "brand_palette": current.palette,
+        }
 
     try:
         return await asyncio.to_thread(_add)
@@ -170,15 +203,62 @@ async def add_brand_asset(payload: BrandAssetIn, _: None = Depends(require_token
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.patch("/brand/assets")
+async def relabel_brand_asset(
+    payload: AssetKindIn,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
+    """Change what a composite is. Placement depends on it; the file does not move."""
+    try:
+        fresh = await asyncio.to_thread(
+            brand.set_asset_kind, workspace, payload.asset_key, payload.kind
+        )
+    except brand.BrandError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**asdict(fresh), "is_complete": fresh.is_complete()}
+
+
+@app.delete("/brand/assets")
+async def delete_brand_asset(
+    asset_key: str,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> dict:
+    """Remove one asset from the brand and the bucket, and rebuild the palette."""
+    try:
+        fresh = await asyncio.to_thread(brand.remove_asset, workspace, asset_key)
+    except brand.BrandError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**asdict(fresh), "is_complete": fresh.is_complete()}
+
+
+@app.get("/projects")
+async def list_projects(
+    workspace: str = Depends(require_workspace), _: None = Depends(require_token)
+) -> dict:
+    """What this workspace has actually generated.
+
+    A workspace that has run nothing returns an empty list — the gallery's empty
+    state is real storage being empty, not a first-run flag.
+    """
+    runs = await asyncio.to_thread(runner.list_runs, workspace)
+    return {"projects": runs}
+
+
 @app.post("/runs", response_model=RunResponse, status_code=202)
-async def create_run(req: RunRequest, _: None = Depends(require_token)) -> RunResponse:
+async def create_run(
+    req: RunRequest,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> RunResponse:
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     job = RunResponse(run_id=job_id, node_id=req.node_id, status=RunStatus.queued)
     async with _LOCK:
         _JOBS[job_id] = job
 
     # Detached on purpose: the caller polls rather than waiting.
-    asyncio.create_task(_execute(job_id, req))
+    asyncio.create_task(_execute(job_id, req, workspace))
     return job
 
 
