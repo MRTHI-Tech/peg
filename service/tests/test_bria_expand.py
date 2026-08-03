@@ -337,6 +337,43 @@ class BriaExpandProviderTests(unittest.TestCase):
             self.assertEqual(result.status, StepStatus.SUCCEEDED)
             self.assertEqual(submitted["seed"], 99)
 
+    def test_status_body_request_id_is_per_call_and_must_not_gate_the_poll(self) -> None:
+        """Bria mints a new `request_id` for every status GET.
+
+        Verified live on 2026-08-04: three GETs against one finished job
+        returned three different ids, none of them the job's. Treating that
+        field as a correlation check rejected a job that had actually
+        completed, so the only correlation is the URL we build ourselves.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            step, _ = self._step(root)
+            polls = 0
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                nonlocal polls
+                if request.method == "POST":
+                    return httpx.Response(202, json={"request_id": REQUEST_ID})
+                if str(request.url) == STATUS_URL:
+                    polls += 1
+                    return httpx.Response(
+                        200,
+                        json={
+                            # Deliberately never REQUEST_ID, and different each call.
+                            "request_id": f"per-call-{polls:032d}",
+                            "status": "IN_PROGRESS" if polls == 1 else "COMPLETED",
+                            "result": {"image_url": OUTPUT_URL},
+                        },
+                    )
+                if str(request.url) == OUTPUT_URL:
+                    return httpx.Response(200, content=_png((972, 472), (7, 7, 7)))
+                return httpx.Response(404)
+
+            result = self._provider(root, handler).invoke(step, {"timeout": 5})
+
+            self.assertEqual(result.status, StepStatus.SUCCEEDED)
+            self.assertGreaterEqual(polls, 2)
+
     def test_api_may_resize_source_to_requested_original_size(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -471,14 +471,13 @@ class BriaExpandProvider(BaseProvider):
             if cached is not None and cached.result is not None:
                 return True
 
+        # `request_id` in a status body is NOT the job id -- Bria mints a fresh
+        # one per status call (verified live: three GETs on one finished job
+        # returned three different ids). Correlation comes from the URL, which
+        # we build ourselves from the submitted id, so there is nothing here to
+        # cross-check. Comparing the two rejects every real poll.
         response = self._request("GET", _status_url(request_id))
         body = self._json_object(response)
-        response_id = body.get("request_id")
-        if response_id is not None and response_id != request_id:
-            raise ProviderError(
-                "Bria status response did not match the submitted request",
-                error_code=ProviderErrorCode.UNKNOWN,
-            )
         status = str(body.get("status", "")).upper()
         if status == "IN_PROGRESS":
             return False

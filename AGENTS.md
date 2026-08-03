@@ -164,6 +164,7 @@ Everything below was checked against the **installed SDK** (`genblaze 0.4.5`, `g
 |---|---|---|---|
 | `seedream-5.0-lite` | text-to-image plate | 2048×2048 | `service/smoke_test.py` |
 | `gemini-3.1-flash-lite-image` | text-to-image with **accurate text** | 1024×1024 | `service/nano_banana_test.py`; worked first try |
+| `bria-expand-v2` | canvas expansion to breakpoint | exactly the requested canvas | `service/expand_test.py`; **direct Bria, not GMI** |
 
 **`bria-genfill` is no longer how PEG reaches a breakpoint.** It is still a live, working GMI model, but it is the wrong tool for canvas extension — see the expansion recipe below. Extend Canvas now calls Bria's `/v2/image/edit/expand` **directly**, outside GMI.
 
@@ -232,7 +233,10 @@ Non-obvious details:
 - **Never follow Bria's returned `status_url`.** It is validated for protocol drift and then discarded; the canonical endpoint is reconstructed from the request id. Output URLs are checked against an allowlist of Bria delivery hosts before any download.
 - `BRIA_API_TOKEN` is separate from `GMI_API_KEY` — this endpoint is not exposed through GMI Cloud. The service boots without it; only Extend Canvas fails, with a scoped configuration error.
 
-⚠️ **Not yet verified against the live Expand endpoint.** The stack is covered by 23 unit tests with a mocked transport, and the *old* path's failure was confirmed live. One real run through `service/expand_test.py` is still outstanding.
+- ⚠️ **`request_id` in a status body is not the job id.** Bria mints a fresh one for every status GET — three calls against one finished job returned three different ids, none of them the job's. An early version treated it as a correlation check and rejected a job that had actually completed. Correlation comes from the status URL, which we construct ourselves. Do not add that check back.
+- **Delivery URLs are `temp.bria.ai`** in practice, and signed/expiring. `_completed_result` re-reads status on a fetch retry so a stale URL refreshes rather than 403s.
+
+**Verified live end-to-end on 2026-08-04**: 2048² plate → **exactly 1920×600**, one continuous photograph with the podiums held on the right and a calm left third for a headline. No second scene, no duplicated subject, no inset frame — the genfill failure is gone. The seam where restored source meets generated pixels measures a column delta of ~1.8 against a ~1.2 baseline in flat areas and ~5.0 inside the source itself, i.e. below the image's own noise floor and invisible at 3× zoom. The 4px `SEAM_FEATHER` is enough.
 
 ### GMI reliability — plan for it
 
@@ -318,7 +322,7 @@ Do not hand-roll object keys. Manifest top-level shape is `canonical_hash`, `enc
 
 **The brand lock is now palette-only for any new brand, and nothing fills the gap yet.** The brand form no longer asks for a look description — a marketing team briefs each campaign on the canvas instead — so `Brand.prompt_prefix()` emits only the extracted hex values unless a `description` was stored by an earlier version. That removes the one conditioning mechanism actually proven to hold. The intended fix is deriving the description from the uploaded style references (the unbuilt Read Style node, `GEMINI_API_KEY`); until that exists, expect weaker brand adherence than the smoke tests showed. `description` is still read and honoured, and `PUT /brand` deliberately does not accept it so an empty form cannot erase one.
 
-**Extend Canvas has not had a live run since the rewrite.** The Bria Expand path replaced the genfill mask recipe on 2026-08-04 and is unit-tested against a mocked transport only. Before trusting it, set `BRIA_API_TOKEN` and run `service/expand_test.py` — then confirm the result reads as one continuous photograph, and that `finalize_expand`'s ~4px seam feather is enough where the restored source meets generated pixels. Widen `SEAM_FEATHER` if a boundary is visible.
+**Only the unframed path has had a live run.** `expand_test.py` proved a clean square plate → 1920×600. The *framed* branch of `prepare_expand` — flat brand frame peeled and rebuilt, corner lockup locked to bottom-right — is unit-tested only. Run `expand_test.py` against a framed source before trusting Extend Canvas on finished artwork.
 
 ## Commands
 
