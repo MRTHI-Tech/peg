@@ -1,7 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const {FORMAT_SELECTOR_OPTIONS, toRunFormat} = require('../lib/formats.ts');
+const {
+  DEFAULT_OUTPAINT_PRESET,
+  FORMAT_SELECTOR_OPTIONS,
+  toOutpaintFormat,
+  toRunFormat,
+} = require('../lib/formats.ts');
 
 test('output choices are grouped into exact sizes and familiar formats', () => {
   assert.deepEqual(
@@ -35,4 +40,18 @@ test('a descriptive format resolves to its exact output dimensions', () => {
 
 test('legacy breakpoint labels still resolve for older graphs', () => {
   assert.equal(toRunFormat({preset: 'Laptop hero'}).width, 1440);
+});
+
+test('Extend Canvas resolves the target chosen on the node itself', () => {
+  assert.deepEqual(
+    toOutpaintFormat({outputSize: '1080x1920', safeArea: 'Upper third', focalPoint: 'Center'}),
+    {width: 1080, height: 1920, focal_point: 'center', safe_area: 'upper-third'},
+  );
+});
+
+test('an Extend Canvas node saved before it had a size falls back to the wide default', () => {
+  const fallback = toOutpaintFormat({strength: 0.65});
+  assert.deepEqual(fallback, toRunFormat({preset: DEFAULT_OUTPAINT_PRESET}));
+  assert.equal(fallback.width, 1920);
+  assert.equal(fallback.height, 600);
 });

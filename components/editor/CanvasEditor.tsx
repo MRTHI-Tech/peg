@@ -17,7 +17,7 @@ import {
   screenToWorld,
   type Viewport,
 } from '@/lib/canvas-geometry';
-import {toRunFormat} from '@/lib/formats';
+import {toOutpaintFormat, toRunFormat} from '@/lib/formats';
 import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
 import {useBrand} from '@/lib/use-brand';
 import {useMediaQuery} from '@/lib/use-media-query';
@@ -667,8 +667,12 @@ export function CanvasEditor({
         : prompt;
 
       // Outpaint is the explicit Extend Canvas job, not a generic property of
-      // every image model that happens to have image and format inputs.
-      const isOutpaint = node.type === 'genfill' && Boolean(sourceAssetKey && format);
+      // every image model that happens to have image and format inputs. The
+      // target comes from a connected Format when there is one, so a fan-out
+      // still runs from a single node, and otherwise from the node itself.
+      const outpaintFormat =
+        node.type === 'genfill' ? format ?? toOutpaintFormat(node.params) : undefined;
+      const isOutpaint = Boolean(outpaintFormat && sourceAssetKey);
       const isCompose = node.type === 'app-store-compose';
 
       // Fail here rather than spending a call the API will reject anyway.
@@ -739,7 +743,7 @@ export function CanvasEditor({
             source_asset_key: isCompose ? baseAssetKey : sourceAssetKey,
             overlay_asset_key: isCompose ? overlayAssetKey : undefined,
             logo_asset_key: isCompose ? String(node.params.logoAssetKey ?? '') || undefined : undefined,
-            format: isCompose ? composeFormat : isOutpaint ? format : undefined,
+            format: isCompose ? composeFormat : isOutpaint ? outpaintFormat : undefined,
             // Outpaint already has an image; a reference would fight it.
             image_b64: isOutpaint ? undefined : referenceB64,
           },

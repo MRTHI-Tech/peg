@@ -181,6 +181,28 @@ export function toRunFormat(params: Record<string, string | number | boolean>): 
   };
 }
 
+/**
+ * What Extend Canvas targets when nothing else says otherwise.
+ *
+ * Matches the Format node's own default so a graph built either way lands on
+ * the same canvas, and so a node saved before the size moved onto it does not
+ * silently resolve to a square.
+ */
+export const DEFAULT_OUTPAINT_PRESET = '1920x600';
+
+/**
+ * Resolve an Extend Canvas node's own target canvas.
+ *
+ * The size lives on the node so a plate can be extended without wiring up a
+ * Format. A connected Format node still wins; this is the fallback.
+ */
+export function toOutpaintFormat(params: Record<string, string | number | boolean>): RunFormat {
+  return toRunFormat({
+    ...params,
+    preset: String(params.outputSize ?? '') || DEFAULT_OUTPAINT_PRESET,
+  });
+}
+
 export function presetLabels(): string[] {
   return FORMAT_PRESETS.map(p => p.label);
 }

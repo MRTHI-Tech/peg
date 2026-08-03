@@ -20,7 +20,7 @@
  * documented surface.
  */
 
-import {FORMAT_SELECTOR_OPTIONS} from './formats';
+import {DEFAULT_OUTPAINT_PRESET, FORMAT_SELECTOR_OPTIONS} from './formats';
 import type {NodeCategory, NodeDef, ParamSpec, Port} from './types';
 
 // ---------------------------------------------------------------------- ports
@@ -105,6 +105,44 @@ const NUMBER_OF_IMAGES = {
 } satisfies ParamSpec;
 
 const GEN_TAIL: ParamSpec[] = [NEGATIVE_PROMPT, SEED, RANDOM_SEED, NUMBER_OF_IMAGES];
+
+/** Shared so the Format node and Extend Canvas can never offer different geometry. */
+const SAFE_AREA_OPTIONS = ['Left third', 'Right third', 'Upper third', 'Lower third', 'Center'];
+const FOCAL_POINT_OPTIONS = ['Left', 'Center', 'Right'];
+
+/**
+ * Extend Canvas states its own target canvas.
+ *
+ * A Format node is still the right tool for a fan-out, where several
+ * breakpoints are driven from one place, so a connected Format wins. These are
+ * for the common case of taking one plate wider without wiring anything up.
+ */
+const OUTPAINT_TARGET: ParamSpec[] = [
+  {
+    key: 'outputSize',
+    label: 'Target size',
+    kind: 'select',
+    options: FORMAT_SELECTOR_OPTIONS,
+    default: DEFAULT_OUTPAINT_PRESET,
+    tooltip: 'The canvas to compose onto. Ignored while a Format node is connected.',
+  },
+  {
+    key: 'safeArea',
+    label: 'Safe area',
+    kind: 'select',
+    options: SAFE_AREA_OPTIONS,
+    default: 'Left third',
+    tooltip: 'Region kept visually calm so headline copy stays legible.',
+  },
+  {
+    key: 'focalPoint',
+    label: 'Focal point',
+    kind: 'select',
+    options: FOCAL_POINT_OPTIONS,
+    default: 'Right',
+    tooltip: 'Where the existing plate sits once the frame grows around it.',
+  },
+];
 
 /**
  * Candidates for turning a reference image into a plate.
@@ -221,7 +259,7 @@ export const CATALOG: NodeDef[] = [
         key: 'safeArea',
         label: 'Safe area',
         kind: 'select',
-        options: ['Left third', 'Right third', 'Upper third', 'Lower third', 'Center'],
+        options: SAFE_AREA_OPTIONS,
         default: 'Left third',
         tooltip: 'Region kept visually calm so headline copy stays legible.',
       },
@@ -229,7 +267,7 @@ export const CATALOG: NodeDef[] = [
         key: 'focalPoint',
         label: 'Focal point',
         kind: 'select',
-        options: ['Left', 'Center', 'Right'],
+        options: FOCAL_POINT_OPTIONS,
         default: 'Right',
         tooltip: 'Where the product should sit in frame.',
       },
@@ -336,9 +374,9 @@ export const CATALOG: NodeDef[] = [
     provider: 'gmicloud-image',
     model: 'bria-genfill',
     cost: 0.02,
-    // Mask is optional: connect a Format and the mask is derived from the
-    // breakpoint geometry — the plate is seated at the focal point and
-    // everything else is filled. Connect a mask instead for manual inpainting.
+    // Mask is optional: the mask is derived from the target geometry — the
+    // plate is seated at the focal point and everything else is filled.
+    // Connect a mask instead for manual inpainting.
     inputs: [
       promptIn('Prompt', false),
       imageIn(),
@@ -346,9 +384,9 @@ export const CATALOG: NodeDef[] = [
       maskIn(false),
     ],
     outputs: [imageOut()],
-    params: [STRENGTH, ...GEN_TAIL],
+    params: [...OUTPAINT_TARGET, STRENGTH, ...GEN_TAIL],
     description:
-      'Recomposes a plate onto a breakpoint. Connect a Format and the empty region is filled to match.',
+      'Recomposes a plate onto a bigger canvas. Pick the target here, or connect a Format node to drive a whole fan-out from one place.',
   },
   {
     type: 'eraser',
