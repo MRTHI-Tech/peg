@@ -43,12 +43,7 @@ export default async function GalleryPage() {
         <TopNav
           label="PEG"
           heading={
-            <HStack gap={1.5} align="center">
-              <PegLogo width={24} height={24} />
-              <Text type="body" weight="semibold">
-                PEG
-              </Text>
-            </HStack>
+            <PegLogo height={20} />
           }
           endContent={
             <HStack gap={2} align="center">

@@ -203,12 +203,7 @@ export function BrandSetup({canEdit}: {canEdit: boolean}) {
         <TopNav
           label="Brand"
           heading={
-            <HStack gap={1.5} align="center">
-              <PegLogo width={24} height={24} />
-              <Text type="body" weight="semibold">
-                PEG
-              </Text>
-            </HStack>
+            <PegLogo height={20} />
           }
           endContent={
             <HStack gap={2} align="center">

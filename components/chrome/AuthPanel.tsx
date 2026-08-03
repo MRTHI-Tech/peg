@@ -6,8 +6,7 @@ import {OrganizationList, SignIn, SignUp} from '@clerk/nextjs';
 import {Card} from '@astryxdesign/core/Card';
 import {Center} from '@astryxdesign/core/Center';
 import {Grid} from '@astryxdesign/core/Grid';
-import {HStack, VStack} from '@astryxdesign/core/Stack';
-import {Text} from '@astryxdesign/core/Text';
+import {VStack} from '@astryxdesign/core/Stack';
 
 import {PegLogo} from '@/components/brand/PegLogo';
 
@@ -80,12 +79,7 @@ function AuthShell({children}: {children: ReactNode}) {
             align="stretch"
             className="auth-split-grid">
             <VStack gap={5} height="100%">
-              <HStack gap={1.5} align="center">
-                <PegLogo width={24} height={24} />
-                <Text type="body" weight="semibold">
-                  PEG
-                </Text>
-              </HStack>
+              <PegLogo height={24} />
               {children}
             </VStack>
 

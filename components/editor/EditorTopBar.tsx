@@ -50,7 +50,7 @@ export function EditorTopBar({
       heading={
         <HStack gap={2} align="center">
           <Link href="/" aria-label="All projects">
-            <PegLogo width={22} height={22} />
+            <PegLogo height={18} />
           </Link>
           <TextInput
             label="Project name"
