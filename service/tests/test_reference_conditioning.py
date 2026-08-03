@@ -85,6 +85,42 @@ class ReferenceReachesTheModel(unittest.TestCase):
         captured = self._capture(RunRequest(model="seedream-5.0-lite", prompt="a hero"))
         self.assertNotIn("image", captured["params"])
 
+    def test_a_chained_b2_asset_becomes_the_edit_image(self) -> None:
+        raw = base64.b64decode(png_b64())
+        key = "peg/workspaces/org_a/runs/2026-08-03/run_a/assets/source.png"
+        with mock.patch.object(runner, "fetch_object", return_value=raw) as fetch:
+            captured = self._capture(
+                RunRequest(
+                    model="gemini-3.1-flash-image",
+                    prompt="change the headline",
+                    source_asset_key=key,
+                )
+            )
+
+        fetch.assert_called_once_with(key)
+        self.assertEqual(captured["params"]["image"], png_b64())
+
+    def test_a_chained_asset_cannot_cross_workspace_boundaries(self) -> None:
+        req = RunRequest(
+            model="gemini-3.1-flash-image",
+            prompt="change the headline",
+            source_asset_key="peg/workspaces/org_b/runs/run_a/assets/source.png",
+        )
+
+        with self.assertRaisesRegex(runner.RunFailed, "does not belong"):
+            runner.run_generate(req, "org_a")
+
+    def test_stale_strength_is_removed_from_gemini_edits(self) -> None:
+        captured = self._capture(
+            RunRequest(
+                model="gemini-3.1-flash-image",
+                prompt="change the headline",
+                params={"strength": 0.05},
+            )
+        )
+
+        self.assertNotIn("strength", captured["params"])
+
 
 class InlineImageProvenanceTests(unittest.TestCase):
     def setUp(self) -> None:

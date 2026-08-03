@@ -283,6 +283,14 @@ def fetch_object(key: str) -> bytes:
     return _s3().get_object(Bucket=_bucket(), Key=key)["Body"].read()
 
 
+def fetch_workspace_object(key: str, workspace: str) -> bytes:
+    """Fetch a chained input only when the current workspace owns it."""
+    prefix = f"{workspace_prefix(workspace)}/"
+    if not key.startswith(prefix):
+        raise RunFailed("source asset does not belong to this workspace")
+    return fetch_object(key)
+
+
 def list_runs(workspace: str, limit: int = 60) -> list[dict]:
     """Every generation this workspace has produced, newest first.
 
@@ -471,6 +479,14 @@ def run_generate(
         params["negative_prompt"] = req.negative_prompt
     if req.image_b64:
         params["image"] = req.image_b64
+    elif req.source_asset_key:
+        params["image"] = base64.b64encode(
+            fetch_workspace_object(req.source_asset_key, workspace)
+        ).decode()
+    if req.model.lower().startswith("gemini-"):
+        # Gemini edits conversationally and has no strength parameter. A stale
+        # pre-deploy node may still carry one in browser state.
+        params.pop("strength", None)
     if references:
         params["peg_brand_references"] = [
             reference.manifest_marker() for reference in references
@@ -570,7 +586,7 @@ def run_outpaint(req: RunRequest, workspace: str) -> RunOutcome:
     if req.source_b64:
         raw = base64.b64decode(req.source_b64)
     elif req.source_asset_key:
-        raw = fetch_object(req.source_asset_key)
+        raw = fetch_workspace_object(req.source_asset_key, workspace)
     else:
         raise RunFailed("outpaint requires source_asset_key or source_b64")
 

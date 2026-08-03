@@ -241,9 +241,9 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
    * Resolve a node's inputs from the graph.
    *
    * The prompt comes from whatever text node feeds its prompt port; the target
-   * geometry from whatever Format node feeds its format port. A node with an
-   * upstream image input becomes an outpaint rather than a fresh generation,
-   * which is how a plate gets recomposed to a breakpoint.
+   * geometry from whatever Format node feeds its format port. An upstream image
+   * becomes the source for an edit; Extend Canvas additionally uses a Format to
+   * turn that source into the proven outpaint recipe.
    */
   const resolveInputs = useCallback(
     (node: PegNode) => {
@@ -348,7 +348,9 @@ export function CanvasEditor({workflow}: {workflow: Workflow}) {
             prompt: directedPrompt,
             negative_prompt: String(node.params.negativePrompt ?? '') || undefined,
             params,
-            source_asset_key: isOutpaint ? sourceAssetKey : undefined,
+            // Every image-input job receives the upstream B2 object. Outpaint
+            // uses it to build a canvas/mask; edit models receive it as `image`.
+            source_asset_key: sourceAssetKey,
             format: isOutpaint ? format : undefined,
             // Outpaint already has an image; a reference would fight it.
             image_b64: isOutpaint ? undefined : referenceB64,

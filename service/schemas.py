@@ -49,7 +49,8 @@ class RunRequest(BaseModel):
     # generate: optional reference image, base64 (no data: prefix).
     image_b64: str | None = None
 
-    # outpaint: the plate to recompose, plus where it should land.
+    # generate/edit: an upstream B2 asset is sent as the model's image input.
+    # outpaint: the same asset is recomposed onto the target format.
     source_asset_key: str | None = None
     source_b64: str | None = None
     format: FormatSpec | None = None

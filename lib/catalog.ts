@@ -318,12 +318,12 @@ export const CATALOG: NodeDef[] = [
     title: 'Edit Scene',
     category: 'image-models',
     provider: 'gmicloud-image',
-    model: 'seededit-3-0-i2i-250628',
-    cost: 0.02,
+    model: 'gemini-3.1-flash-image',
+    cost: 0.04,
     inputs: [promptIn(), imageIn('image', 'Image')],
     outputs: [imageOut()],
-    params: [RESOLUTION, STRENGTH, ...GEN_TAIL],
-    description: 'Image-to-image editing driven by an instruction.',
+    params: [RESOLUTION, ...GEN_TAIL],
+    description: 'Edits an upstream image while preserving the workspace Brand Kit.',
   },
 
   // ======================================================================= edit
