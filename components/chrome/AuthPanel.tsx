@@ -1,7 +1,7 @@
 'use client';
 
 import type {ReactNode} from 'react';
-import {SignIn, SignUp} from '@clerk/nextjs';
+import {OrganizationList, SignIn, SignUp} from '@clerk/nextjs';
 
 import {Card} from '@astryxdesign/core/Card';
 import {Center} from '@astryxdesign/core/Center';
@@ -137,6 +137,29 @@ export function SignUpPanel() {
   return (
     <AuthShell>
       <SignUp appearance={appearance} />
+    </AuthShell>
+  );
+}
+
+/**
+ * Pick or create the organization to work in.
+ *
+ * `hidePersonal` is the whole point: a personal workspace is a separate B2
+ * prefix, so letting someone start there means the brand they build vanishes the
+ * day they create a real organization. Landing on the gallery afterwards rather
+ * than the brand form is deliberate — the empty state is what tells them the
+ * workspace is theirs and new.
+ */
+export function WorkspacePanel() {
+  return (
+    <AuthShell>
+      <OrganizationList
+        appearance={appearance}
+        hidePersonal
+        skipInvitationScreen
+        afterCreateOrganizationUrl="/"
+        afterSelectOrganizationUrl="/"
+      />
     </AuthShell>
   );
 }

@@ -1,5 +1,3 @@
-import {auth} from '@clerk/nextjs/server';
-
 import {AppShell} from '@astryxdesign/core/AppShell';
 import {TopNav} from '@astryxdesign/core/TopNav';
 import {Grid} from '@astryxdesign/core/Grid';
@@ -18,6 +16,7 @@ import {CreditsPill} from '@/components/chrome/CreditsPill';
 import {GenerationCard} from '@/components/gallery/GenerationCard';
 import {TemplateCard} from '@/components/gallery/TemplateCard';
 import {listGenerations} from '@/lib/generations';
+import {requireOrganization} from '@/lib/workspace';
 import {NEW_WORKFLOW_ID, TEMPLATES} from '@/lib/mock-data';
 
 /**
@@ -28,8 +27,10 @@ import {NEW_WORKFLOW_ID, TEMPLATES} from '@/lib/mock-data';
  * gallery entries), unlike the dense rows used for tabular data.
  */
 export default async function GalleryPage() {
-  // Protection sits with the resource, not a middleware matcher.
-  await auth.protect();
+  // Protection sits with the resource, not a middleware matcher. This also
+  // forces an organization, so nobody starts work in a personal workspace
+  // they would later lose sight of.
+  await requireOrganization();
 
   // Real storage, not fixtures: a workspace that has generated nothing shows
   // nothing, which is the whole point of the empty state.

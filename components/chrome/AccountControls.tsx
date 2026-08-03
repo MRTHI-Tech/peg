@@ -26,12 +26,14 @@ const appearance = {
 export function AccountControls() {
   return (
     <>
+      {/* `hidePersonal`: pages require an organization, so offering the personal
+          account here would switch someone into a workspace every page then
+          bounces them out of. */}
       <OrganizationSwitcher
         appearance={appearance}
-        hidePersonal={false}
-        afterCreateOrganizationUrl="/brand"
+        hidePersonal
+        afterCreateOrganizationUrl="/"
         afterSelectOrganizationUrl="/"
-        afterSelectPersonalUrl="/"
       />
       <UserButton appearance={appearance} />
     </>
