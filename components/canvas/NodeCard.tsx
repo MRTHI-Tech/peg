@@ -1,6 +1,7 @@
 'use client';
 
 import {useState} from 'react';
+import {createPortal} from 'react-dom';
 import {Eraser, Lock, LockOpen, Pencil, Play, Sparkles, Trash2} from 'lucide-react';
 
 import {Button} from '@astryxdesign/core/Button';
@@ -63,7 +64,13 @@ export function NodeCard({
   const isBusy = node.status === 'queued' || node.status === 'running';
   const referenceImage = node.type === 'reference' ? String(node.params.image ?? '') : '';
   const previewUrl = node.result?.url || referenceImage;
-  const renameDialog = useImperativeDialog({purpose: 'form', width: 400});
+  const renameDialog = useImperativeDialog({
+    purpose: 'form',
+    width: 400,
+    // Portal events still follow the React tree. Stop the canvas root from
+    // treating a press inside the form as the start of a pan gesture.
+    onPointerDown: event => event.stopPropagation(),
+  });
 
   const openRenameDialog = () => {
     renameDialog.show(
@@ -262,7 +269,11 @@ export function NodeCard({
         />
       ))}
       </div>
-      {renameDialog.element}
+      {/* The canvas root captures pointer gestures for panning. Keeping the
+          dialog under that root retargets the Rename button's pointerup to the
+          canvas, so its click never fires. An open dialog belongs outside that
+          gesture boundary. */}
+      {renameDialog.isOpen && createPortal(renameDialog.element, document.body)}
     </>
   );
 }
