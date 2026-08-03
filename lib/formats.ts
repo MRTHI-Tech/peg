@@ -1,9 +1,9 @@
 /**
  * Breakpoint presets for the Format node.
  *
- * These are the dimensions PEG actually composes for. No GMI image model
- * honours size parameters, so the target is reached by outpainting onto a
- * canvas of exactly these dimensions rather than by asking for them.
+ * These are the dimensions PEG actually composes for. The dedicated expansion
+ * operation uses them as the exact final canvas rather than cropping a single
+ * source composition into several ratios.
  */
 
 import type {ParamSelectSection} from './types';

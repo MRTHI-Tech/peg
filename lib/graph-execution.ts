@@ -7,9 +7,12 @@ export interface DependencyEdge {
 /** Model steps and PEG's deterministic local renderers execute in the service. */
 export function isExecutableNode<T extends {provider?: string; model?: string}>(
   node: T,
-): node is T & {provider: 'gmicloud-image' | 'peg-local'; model: string} {
+): node is T & {provider: 'gmicloud-image' | 'bria-direct' | 'peg-local'; model: string} {
   return (
-    (node.provider === 'gmicloud-image' || node.provider === 'peg-local') && Boolean(node.model)
+    (node.provider === 'gmicloud-image' ||
+      node.provider === 'bria-direct' ||
+      node.provider === 'peg-local') &&
+    Boolean(node.model)
   );
 }
 

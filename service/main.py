@@ -132,7 +132,12 @@ def require_workspace(x_peg_workspace: str | None = Header(default=None)) -> str
 async def health() -> dict:
     async with _LOCK:
         active = sum(1 for j in _JOBS.values() if j.status == RunStatus.running)
-    return {"status": "ok", "bucket": os.environ.get("B2_BUCKET"), "active_runs": active}
+    return {
+        "status": "ok",
+        "bucket": os.environ.get("B2_BUCKET"),
+        "active_runs": active,
+        "expand_configured": bool(os.environ.get("BRIA_API_TOKEN", "").strip()),
+    }
 
 
 @app.get("/brand")

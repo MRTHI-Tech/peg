@@ -29,6 +29,11 @@ services:
         value: "3.11.15"
       - key: GMI_API_KEY
         sync: false
+      # Direct Bria access powers the dedicated Expand endpoint. Keep the
+      # service bootable while this is unset so unrelated generation still
+      # works; Extend Canvas reports a scoped configuration error instead.
+      - key: BRIA_API_TOKEN
+        sync: false
       - key: B2_KEY_ID
         sync: false
       - key: B2_APP_KEY

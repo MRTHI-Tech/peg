@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env.local")
 
 REQUIRED = ["GMI_API_KEY", "B2_KEY_ID", "B2_APP_KEY", "B2_BUCKET", "B2_REGION"]
-OPTIONAL = ["GEMINI_API_KEY", "GMI_BASE_URL"]
+OPTIONAL = ["BRIA_API_TOKEN", "GEMINI_API_KEY", "GMI_BASE_URL"]
 
 
 def mask(value: str) -> str:

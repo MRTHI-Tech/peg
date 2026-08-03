@@ -10,7 +10,7 @@
  *   - Higgsfield, Recraft, Mystic/Freepik, Ideogram — no Genblaze connector.
  *   - Flux Dev LoRA, Import Model — Genblaze has no LoRA/fine-tune concept.
  *   - Mask Extractor, Mask by Text — no segmentation models are registered.
- *     Masks can be *consumed* (bria-genfill/eraser) but not generated.
+ *     Masks can be *consumed* by the eraser but not generated.
  *   - Levels, Blur, Invert, Channels, Crop, Resize, Merge Alpha, iterators —
  *     out of scope for the brand key-visual workflow.
  *
@@ -371,8 +371,8 @@ export const CATALOG: NodeDef[] = [
     type: 'genfill',
     title: 'Extend Canvas',
     category: 'edit',
-    provider: 'gmicloud-image',
-    model: 'bria-genfill',
+    provider: 'bria-direct',
+    model: 'bria-expand-v2',
     cost: 0.02,
     inputs: [
       promptIn('Background fill', false),
@@ -380,9 +380,9 @@ export const CATALOG: NodeDef[] = [
       {id: 'format', name: 'Format', type: 'format', isRequired: false},
     ],
     outputs: [imageOut()],
-    params: [...OUTPAINT_TARGET, STRENGTH, ...GEN_TAIL],
+    params: [...OUTPAINT_TARGET, NEGATIVE_PROMPT, SEED, RANDOM_SEED],
     description:
-      'Recomposes a plate onto a bigger canvas. Background fill is optional and should describe only the empty scenery generated beyond the source. Pick the target here, or connect a Format node to drive a whole fan-out from one place.',
+      'Expands a plate to a new canvas without cropping or inventing a separate scene. Background direction is optional and applies only beyond the source. Pick the target here, or connect a Format node to drive a whole fan-out from one place.',
   },
   {
     type: 'eraser',

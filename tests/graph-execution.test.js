@@ -97,10 +97,11 @@ test('cycles are rejected without spending a run', async () => {
   ]);
 });
 
-test('PEG local renderers are executable alongside GMI model nodes', () => {
+test('PEG local and direct Bria renderers are executable alongside GMI model nodes', () => {
   assert.equal(
     isExecutableNode({provider: 'peg-local', model: 'app-store-layout-v1'}),
     true,
   );
+  assert.equal(isExecutableNode({provider: 'bria-direct', model: 'bria-expand-v2'}), true);
   assert.equal(isExecutableNode({provider: undefined, model: undefined}), false);
 });

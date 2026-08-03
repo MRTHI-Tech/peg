@@ -163,14 +163,15 @@ Everything below was checked against the **installed SDK** (`genblaze 0.4.5`, `g
 | Model | Role | Output size | Notes |
 |---|---|---|---|
 | `seedream-5.0-lite` | text-to-image plate | 2048×2048 | `service/smoke_test.py` |
-| `bria-genfill` | outpaint to breakpoint | matches input canvas | `service/outpaint_test.py`; flaky, retry |
 | `gemini-3.1-flash-lite-image` | text-to-image with **accurate text** | 1024×1024 | `service/nano_banana_test.py`; worked first try |
+
+**`bria-genfill` is no longer how PEG reaches a breakpoint.** It is still a live, working GMI model, but it is the wrong tool for canvas extension — see the expansion recipe below. Extend Canvas now calls Bria's `/v2/image/edit/expand` **directly**, outside GMI.
 
 **`gemini-3.1-flash-lite-image` is nano-banana 2 Lite.** GMI Cloud is a day-zero launch partner for it, and it is reachable through `GMICloudImageProvider` despite being unregistered. It rendered an exact wordmark plus secondary line, correctly spelled and cleanly kerned, including a properly mirrored reflection — and it succeeded on the first attempt with no retries, notably more reliable than genfill.
 
 Untried siblings, likely also reachable: `gemini-3.1-flash-image`, `gemini-3-pro-image`, `gemini-2.5-flash-image`.
 
-Note each model returns its own fixed size (2048² vs 1024²) and none honour dimension params — the outpaint recipe is still how we hit a breakpoint.
+Note each model returns its own fixed size (2048² vs 1024²) and none honour dimension params — expanding the canvas afterwards is still how we hit a breakpoint.
 
 ### How the model registry actually behaves
 
@@ -196,34 +197,54 @@ There is **no way to list image models**. `discover_models()` returns `Discovery
 
 `seedream-5.0-lite` **ignores** `resolution`, `aspect_ratio`, `width`, and `height`. The SDK verifiably sends all four in the payload (`prepare_payload` confirms) and the API returns **2048×2048** regardless.
 
-This is load-bearing for PEG, and the fix is the outpaint recipe below.
+This is load-bearing for PEG, and the fix is the expansion recipe below.
 
-### The outpaint recipe — PROVEN, this is how PEG hits a breakpoint
+### The expansion recipe — this is how PEG hits a breakpoint
 
-Verified end-to-end: square plate → **exactly 1920×600** with the brand look intact and clear headline space. See `service/outpaint_test.py`.
+**A masked inpaint is not a canvas extension. Do not go back to one.**
 
-1. Generate the plate with `seedream-5.0-lite` (comes back 2048×2048).
-2. Scale it to the target's short edge and paste it at the **focal point** on a target-sized canvas (e.g. flush right on 1920×600 when `focalPoint: "Right"`).
-3. Build an `L` mask: **white = generate, black = keep**. Gaussian-blur the boundary (~16px sigma) or you get a hard vertical seam.
-4. Call `bria-genfill` with `image` + `mask` as **base64** — see the gotchas below.
-5. Result comes back at the canvas dimensions. This is what makes "compose, never crop" real.
+The original recipe pasted the plate onto a target-sized canvas, painted a feathered white mask over the empty region, and asked `bria-genfill` to fill it. It reaches the right dimensions, and for a *narrow* margin it looks fine. Given a large empty region it fails in a specific, repeatable way: **genfill invents a second, separate scene beside the source** rather than continuing the original one. A masked fill is only told "put something plausible here" — nothing in the request says the new pixels are the *same photograph* as the kept ones. Reproduced live in isolation on 2026-08-03; that test is what motivated the rewrite.
 
-Non-obvious details that cost several failed runs:
+Bria's `/v2/image/edit/expand` is the purpose-built operation. It takes explicit geometry instead of a mask:
 
-- **The params are `image` and `mask`, not `image_url`/`mask_url`.** Both are in the allowlist, but passing the `_url` variants returns `400 invalid payload parameters: image (Required parameter is missing)`.
-- **Pass base64, not URLs.** Presigned B2 URLs get the connection reset on submit.
-- **A `negative_prompt` naming the objects is mandatory.** Without it genfill happily paints *more podiums* into the space that was supposed to stay empty. Name them: `podium, pedestal, cylinder, platform, object, duplicate, repeated shapes…`
-- Prompt the fill as an *empty backdrop*, not as a continuation of the scene.
+| Field | Meaning |
+|---|---|
+| `image` | the source, base64, at exactly its rendered size |
+| `canvas_size` | `[w, h]` of the result |
+| `original_image_size` | `[w, h]` the source occupies in that result |
+| `original_image_location` | `[x, y]` of its top-left corner |
+
+The current shape, all of it in `service/expand_geometry.py` and `service/bria_expand.py`:
+
+1. Generate the plate normally (any size — 2048² is fine).
+2. `prepare_expand(source, fmt)` detects a flattened brand frame, peels it, scales the scene to fit the inner canvas, and chooses a placement that keeps the source **out of the copy-safe band**. It returns both the model-facing scalars and the local-only material for step 5.
+3. `run_outpaint` refuses the job if the safe area still overlaps protected source pixels, or if the target does not actually extend the source. Both are cheaper as errors than as a bad paid render.
+4. `BriaExpandProvider` submits, polls `/v2/status/<id>`, and downloads. **The POST is paid and unsafe to repeat**, so a 5xx or transport failure on it raises a deliberately non-retryable `UNKNOWN`; only the GETs retry.
+5. `finalize_expand` pastes the original source pixels back over the model's output (feathered ~4px at the seam) and rebuilds the outer frame and corner lockup locally.
+
+Step 5 is the point. **The model is never asked to reproduce anything we already have.** It supplies only newly revealed scene; every protected pixel is restored deterministically, so brand chrome cannot drift.
+
+Non-obvious details:
+
+- **Send the source at its rendered size.** `model_input` is already resized to `original_image_size`. Uploading a 2048² plate and declaring a 600px render wastes payload and invites disagreement.
+- **A `negative_prompt` naming the objects is still mandatory.** Expansion duplicates subjects less than genfill did, but not never. `DEFAULT_NEGATIVE` in `runner.py` names them.
+- **Prompt it as a continuation, not as an empty backdrop.** This is the opposite of the genfill advice and it is deliberate — the endpoint's whole job is continuing one photograph.
+- **Never follow Bria's returned `status_url`.** It is validated for protocol drift and then discarded; the canonical endpoint is reconstructed from the request id. Output URLs are checked against an allowlist of Bria delivery hosts before any download.
+- `BRIA_API_TOKEN` is separate from `GMI_API_KEY` — this endpoint is not exposed through GMI Cloud. The service boots without it; only Extend Canvas fails, with a scoped configuration error.
+
+⚠️ **Not yet verified against the live Expand endpoint.** The stack is covered by 23 unit tests with a mocked transport, and the *old* path's failure was confirmed live. One real run through `service/expand_test.py` is still outstanding.
 
 ### GMI reliability — plan for it
 
-The genfill endpoint **drops connections frequently**: across 7 submits we saw `Connection reset by peer`, `Server disconnected without sending a response` (×3), and one `BrokenPipeError` *mid-transfer* which made Genblaze discard the manifest too. Roughly 1 in 3 submits succeeds.
+Measured on the genfill endpoint, but treat it as GMI's general behaviour at this payload size: it **drops connections frequently**. Across 7 submits we saw `Connection reset by peer`, `Server disconnected without sending a response` (×3), and one `BrokenPipeError` *mid-transfer* which made Genblaze discard the manifest too. Roughly 1 in 3 submits succeeds.
 
 Shrinking the payload (PNG→JPEG q92, 308KB→109KB base64) did **not** fix it. **Retry with backoff is required** — 3 attempts was enough every time. Any production path must retry, and must treat a failed asset transfer as a failed run.
 
 ### Parameters
 
 Registered models enforce a `param_allowlist` and silently drop the rest — e.g. `bria-genfill` drops `width`/`height`. Its allowlist: `prompt`, `negative_prompt`, `image`, `image_url`, `mask`, `mask_url`, `strength`, `denoise`, `resolution`, `aspect_ratio`, `seed`, `number_of_images`.
+
+This applies to the GMI registry only. `BriaExpandProvider` is ours, talks to Bria directly, and validates its own params — it rejects anything outside the six geometry scalars plus `seed` rather than dropping it silently.
 
 Unregistered models get every param passed through untouched — which is why seedream *receives* dimension params and ignores them anyway.
 
@@ -257,7 +278,7 @@ Note `Pipeline.run()` currently **swallows step failures** — it returns `statu
 
 ### B2
 
-Env: `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_REGION`. GMI: `GMI_API_KEY`, `GMI_BASE_URL`.
+Env: `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_REGION`. GMI: `GMI_API_KEY`, `GMI_BASE_URL`. Bria (Extend Canvas only): `BRIA_API_TOKEN`.
 
 `ObjectStorageSink(backend, prefix="peg", key_strategy=KeyStrategy.HIERARCHICAL)` produces:
 
@@ -297,7 +318,7 @@ Do not hand-roll object keys. Manifest top-level shape is `canonical_hash`, `enc
 
 **The brand lock is now palette-only for any new brand, and nothing fills the gap yet.** The brand form no longer asks for a look description — a marketing team briefs each campaign on the canvas instead — so `Brand.prompt_prefix()` emits only the extracted hex values unless a `description` was stored by an earlier version. That removes the one conditioning mechanism actually proven to hold. The intended fix is deriving the description from the uploaded style references (the unbuilt Read Style node, `GEMINI_API_KEY`); until that exists, expect weaker brand adherence than the smoke tests showed. `description` is still read and honoured, and `PUT /brand` deliberately does not accept it so an empty form cannot erase one.
 
-**A faint seam survives feathering** at the mask boundary. Try a wider feather or overlapping the paste region.
+**Extend Canvas has not had a live run since the rewrite.** The Bria Expand path replaced the genfill mask recipe on 2026-08-04 and is unit-tested against a mocked transport only. Before trusting it, set `BRIA_API_TOKEN` and run `service/expand_test.py` — then confirm the result reads as one continuous photograph, and that `finalize_expand`'s ~4px seam feather is enough where the restored source meets generated pixels. Widen `SEAM_FEATHER` if a boundary is visible.
 
 ## Commands
 
@@ -310,7 +331,11 @@ npm run typecheck  # tsc --noEmit
 ```bash
 ./service/.venv/bin/python service/check_env.py       # credentials + live auth
 ./service/.venv/bin/python service/smoke_test.py      # generate -> B2 -> manifest
-./service/.venv/bin/python service/outpaint_test.py   # square -> 1920x600 breakpoint
+./service/.venv/bin/python service/expand_test.py     # square -> 1920x600 breakpoint (paid)
+```
+
+```bash
+npm test           # web + service unit tests, no credentials or spend
 ```
 
 Always run `npm run typecheck` and `npm run build` before declaring work done.

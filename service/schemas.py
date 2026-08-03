@@ -34,9 +34,8 @@ class FormatSpec(BaseModel):
 class RunRequest(BaseModel):
     """One unit of work.
 
-    `generate` produces a plate at the model's native size. `outpaint` takes an
-    existing asset and recomposes it onto a target breakpoint — the only way to
-    hit exact dimensions, since no GMI image model honours size parameters.
+    `generate` produces a plate at the model's native size. `outpaint` expands
+    an existing asset onto an exact target breakpoint without cropping it.
     """
 
     operation: Literal["generate", "outpaint", "compose"] = "generate"
