@@ -166,6 +166,38 @@ export async function executeRun(
   }
 }
 
+// ----------------------------------------------------------------- enhancing
+
+export interface EnhanceRequest {
+  brief: string;
+  /** Shapes the rewrite — see the Art Direct node's Intent parameter. */
+  intent?: string;
+  /** The breakpoint this brief is destined for, when the graph knows one. */
+  format?: RunFormat;
+}
+
+export interface EnhanceResult {
+  brief: string;
+  original: string;
+  model: string;
+}
+
+/**
+ * Rewrite a rough brief as art direction.
+ *
+ * Request-response rather than submit-then-poll: this is one text call, and the
+ * user is waiting on the paragraph with their cursor in the field.
+ */
+export async function enhanceBrief(request: EnhanceRequest): Promise<EnhanceResult> {
+  const response = await fetch('/api/enhance', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
 /** Map a completed run onto the shapes the canvas already renders. */
 export function toAssetRef(result: RunResult): AssetRef | undefined {
   const a = result.asset;

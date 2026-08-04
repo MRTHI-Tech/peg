@@ -1,7 +1,7 @@
 'use client';
 
 import {useState} from 'react';
-import {Play, ShieldAlert, ShieldCheck, Sparkles, Trash2} from 'lucide-react';
+import {Play, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Trash2, Wand2} from 'lucide-react';
 
 import {LayoutPanel} from '@astryxdesign/core/Layout';
 import {HStack, VStack} from '@astryxdesign/core/Stack';
@@ -35,6 +35,19 @@ interface Props {
   onRun: () => void;
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
   onDelete: () => void;
+  /** Brief enhancement, owned by the editor so the card and the field agree. */
+  enhance: EnhanceControls;
+}
+
+export interface EnhanceControls {
+  /** The brief being rewritten right now, if any. */
+  busyId: string | null;
+  /** Last failure per node, cleared on the next attempt. */
+  errors: Record<string, string>;
+  /** Pre-enhancement text per node, kept only so a rewrite can be undone. */
+  originals: Record<string, string>;
+  onEnhance: (nodeId: string) => void;
+  onRevert: (nodeId: string) => void;
 }
 
 /**
@@ -50,6 +63,7 @@ export function InspectorPanel({
   onRun,
   onParamChange,
   onDelete,
+  enhance,
 }: Props) {
   const single = nodes.length === 1 ? nodes[0] : null;
   const runnable = nodes.filter(isExecutableNode);
@@ -69,6 +83,7 @@ export function InspectorPanel({
               node={single}
               brandAssets={brandAssets}
               onParamChange={onParamChange}
+              enhance={enhance}
             />
           ) : (
             <VStack gap={2}>
@@ -146,10 +161,12 @@ function SingleNodeFields({
   node,
   brandAssets,
   onParamChange,
+  enhance,
 }: {
   node: PegNode;
   brandAssets: BrandAsset[];
   onParamChange: (nodeId: string, key: string, value: ParamValue) => void;
+  enhance: EnhanceControls;
 }) {
   const def = getNodeDef(node.type);
 
@@ -194,6 +211,8 @@ function SingleNodeFields({
             This node has no parameters.
           </Text>
         )}
+
+        {node.type === 'prompt' && <BriefEnhancer node={node} enhance={enhance} />}
       </VStack>
 
       {node.status === 'error' && node.error && (
@@ -282,6 +301,67 @@ function SingleNodeFields({
             </VStack>
           </VStack>
         </>
+      )}
+    </VStack>
+  );
+}
+
+/**
+ * Turn a rough brief into art direction, in place.
+ *
+ * Sits directly under the brief field because that is where someone runs out of
+ * words. The rewrite replaces what they wrote — a diff or a side-by-side would
+ * be honest but useless, since the enhanced brief is one paragraph they either
+ * keep or do not. Revert is the safety net, and it survives until the node is
+ * edited by hand.
+ */
+function BriefEnhancer({node, enhance}: {node: PegNode; enhance: EnhanceControls}) {
+  const brief = String(node.params.value ?? '').trim();
+  const isBusy = enhance.busyId === node.id;
+  const error = enhance.errors[node.id];
+  const original = enhance.originals[node.id];
+
+  return (
+    <VStack gap={1}>
+      <HStack gap={1} align="center">
+        <Button
+          label={isBusy ? 'Enhancing…' : 'Enhance brief'}
+          variant="secondary"
+          size="sm"
+          width="100%"
+          icon={<Icon icon={Wand2} size="xsm" />}
+          isLoading={isBusy}
+          isDisabled={isBusy || !brief}
+          tooltip={
+            brief
+              ? 'Rewrite this as art direction, using your brand and the target canvas.'
+              : 'Write a line or two first.'
+          }
+          onClick={() => enhance.onEnhance(node.id)}
+        />
+        {original && !isBusy && (
+          <Button
+            label="Undo enhancement"
+            variant="ghost"
+            size="sm"
+            isIconOnly
+            icon={<Icon icon={RotateCcw} size="xsm" />}
+            tooltip="Put the brief back the way you wrote it."
+            onClick={() => enhance.onRevert(node.id)}
+          />
+        )}
+      </HStack>
+
+      {error ? (
+        <Text type="supporting" maxLines={4} style={{color: 'var(--color-error)'}}>
+          {error}
+        </Text>
+      ) : (
+        <Text type="supporting" color="disabled" maxLines={3}>
+          {original
+            ? 'Enhanced. Undo puts your own words back; editing it keeps them gone.'
+            : 'Adds composition, camera, lighting, and your palette — and keeps the copy-safe area clear.'}
+        </Text>
       )}
     </VStack>
   );

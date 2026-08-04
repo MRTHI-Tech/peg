@@ -507,14 +507,19 @@ export const CATALOG: NodeDef[] = [
     inputs: [],
     outputs: [textOut('Prompt')],
     params: [{key: 'value', label: 'Prompt', kind: 'text', default: '', multiline: true}],
-    description: 'A free-text brief feeding downstream models.',
+    description:
+      'A free-text brief feeding downstream models. Enhance rewrites it as art direction.',
   },
   {
+    // Not runnable: nothing implements a chat provider inside the graph, so
+    // this node has only ever passed its input through. Enhance on the Brief
+    // node is the live path — same rewrite, one click, no wiring.
     type: 'prompt-enhancer',
     title: 'Art Direct',
     category: 'text-tools',
-    provider: 'google-chat',
-    model: 'gemini-2.5-pro',
+    availability: 'coming-soon',
+    provider: 'gmicloud-chat',
+    model: 'google/gemini-3.5-flash-lite',
     cost: 0.002,
     inputs: [promptIn(), styleIn(false)],
     outputs: [textOut()],
@@ -530,11 +535,15 @@ export const CATALOG: NodeDef[] = [
     description: 'Expands a short brief into a full art-direction prompt, folding in the style kit.',
   },
   {
+    // Also not runnable, for the same reason. Kept visible because brand.py
+    // names it as the missing piece that would give a brand its look
+    // description; it needs an image-capable text call, not this one.
     type: 'style-describer',
     title: 'Read Style',
     category: 'text-tools',
-    provider: 'google-chat',
-    model: 'gemini-2.5-pro',
+    availability: 'coming-soon',
+    provider: 'gmicloud-chat',
+    model: 'google/gemini-3.5-flash-lite',
     cost: 0.002,
     inputs: [imageIn('image', 'Reference')],
     outputs: [textOut('Description')],

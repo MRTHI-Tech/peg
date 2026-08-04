@@ -47,6 +47,9 @@ interface Props {
   onConnect: (edge: Omit<Edge, 'id'>) => void;
   onEdgeDelete: (id: string) => void;
   onRunNode: (node: PegNode) => void;
+  onEnhanceNode: (node: PegNode) => void;
+  /** The brief currently being rewritten, if any. */
+  enhancingId?: string | null;
 }
 
 export function NodeCanvas({
@@ -64,6 +67,8 @@ export function NodeCanvas({
   onConnect,
   onEdgeDelete,
   onRunNode,
+  onEnhanceNode,
+  enhancingId,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{startX: number; startY: number; origin: Viewport} | null>(null);
@@ -334,6 +339,8 @@ export function NodeCanvas({
             onHeaderPointerDown={e => startNodeDrag(e, node)}
             onOutputPointerDown={(e, portId, type) => startConnection(e, node, portId, type)}
             onRun={() => onRunNode(node)}
+            onEnhance={node.type === 'prompt' ? () => onEnhanceNode(node) : undefined}
+            isEnhancing={enhancingId === node.id}
             onClear={() => onNodeClear(node.id)}
             onRename={title => onNodeRename(node.id, title)}
             onToggleLock={() => onNodeLockToggle(node.id)}

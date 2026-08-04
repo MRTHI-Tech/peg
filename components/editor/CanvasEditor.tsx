@@ -21,7 +21,9 @@ import {presetSize, safeAreaForTarget, toOutpaintFormat, toRunFormat} from '@/li
 import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
 import {useBrand} from '@/lib/use-brand';
 import {useMediaQuery} from '@/lib/use-media-query';
+import {resolveBriefTarget} from '@/lib/brief-context';
 import {
+  enhanceBrief,
   executeRun,
   loadWorkflow,
   saveWorkflow,
@@ -88,6 +90,13 @@ export function CanvasEditor({
   >('loading');
   const [saveError, setSaveError] = useState<string>();
   const [persistenceReady, setPersistenceReady] = useState(false);
+
+  // Brief enhancement. Transient by design: an enhanced brief is just text in
+  // the node, and the pre-enhancement copy is kept here rather than on the node
+  // so an undo buffer never reaches the saved document.
+  const [enhancingId, setEnhancingId] = useState<string | null>(null);
+  const [enhanceErrors, setEnhanceErrors] = useState<Record<string, string>>({});
+  const [briefOriginals, setBriefOriginals] = useState<Record<string, string>>({});
 
   // Soft gate: the canvas always opens, but generation is withheld until the
   // brand can actually lock it — otherwise output is on-brand by accident.
@@ -500,6 +509,15 @@ export function CanvasEditor({
   };
 
   const updateParam = useCallback((nodeId: string, key: string, value: ParamValue) => {
+    // Hand-editing an enhanced brief retires the undo: from here the text is
+    // theirs again, and offering to "put it back" would throw away their edit.
+    if (key === 'value') {
+      setBriefOriginals(current => {
+        if (!(nodeId in current)) return current;
+        const {[nodeId]: _dropped, ...rest} = current;
+        return rest;
+      });
+    }
     updateNodes(current =>
       current.map(n =>
         n.id === nodeId
@@ -531,6 +549,89 @@ export function CanvasEditor({
       ),
     );
   }, [brand.composites, updateNodes]);
+
+  // ------------------------------------------------------- brief enhancement
+  /** Write a brief onto its node. Card and inspector are two views of one value. */
+  const applyBrief = useCallback(
+    (nodeId: string, text: string) => {
+      updateNodes(current =>
+        current.map(n =>
+          n.id === nodeId ? {...n, params: {...n.params, value: text}, text} : n,
+        ),
+      );
+    },
+    [updateNodes],
+  );
+
+  /**
+   * Rewrite a rough brief as art direction.
+   *
+   * The brand is not sent from here — the service loads it for the workspace,
+   * so an enhanced brief can only ever name a palette this workspace owns. What
+   * the browser does contribute is the target canvas, because only the graph
+   * knows which breakpoint this brief is wired to.
+   */
+  const enhanceNodeBrief = useCallback(
+    async (nodeId: string) => {
+      const node = nodesRef.current.find(n => n.id === nodeId);
+      if (!node) return;
+
+      const brief = String(node.params.value ?? '').trim() || (node.text ?? '').trim();
+      if (!brief || enhancingId) return;
+
+      setEnhanceErrors(current => {
+        const {[nodeId]: _dropped, ...rest} = current;
+        return rest;
+      });
+      setEnhancingId(nodeId);
+
+      const target = resolveBriefTarget(nodeId, nodesRef.current, edgesRef.current);
+
+      try {
+        const result = await enhanceBrief({
+          brief,
+          format: target
+            ? target.source === 'format'
+              ? toRunFormat(target.params)
+              : toOutpaintFormat(target.params)
+            : undefined,
+        });
+        applyBrief(nodeId, result.brief);
+        // Keep what they wrote, not what the last enhancement produced: two
+        // enhancements in a row should still undo back to the human sentence.
+        setBriefOriginals(current => ({...current, [nodeId]: current[nodeId] ?? result.original}));
+      } catch (error) {
+        setEnhanceErrors(current => ({...current, [nodeId]: (error as Error).message}));
+      } finally {
+        setEnhancingId(null);
+      }
+    },
+    [applyBrief, enhancingId],
+  );
+
+  const revertBrief = useCallback(
+    (nodeId: string) => {
+      const original = briefOriginals[nodeId];
+      if (original == null) return;
+      applyBrief(nodeId, original);
+      setBriefOriginals(current => {
+        const {[nodeId]: _dropped, ...rest} = current;
+        return rest;
+      });
+    },
+    [applyBrief, briefOriginals],
+  );
+
+  const enhanceControls = useMemo(
+    () => ({
+      busyId: enhancingId,
+      errors: enhanceErrors,
+      originals: briefOriginals,
+      onEnhance: enhanceNodeBrief,
+      onRevert: revertBrief,
+    }),
+    [briefOriginals, enhanceErrors, enhanceNodeBrief, enhancingId, revertBrief],
+  );
 
   const addNode = useCallback(
     (type: string) => {
@@ -920,6 +1021,7 @@ export function CanvasEditor({
               onRun={runSelected}
               onParamChange={updateParam}
               onDelete={deleteSelection}
+              enhance={enhanceControls}
             />
           )
         }>
@@ -977,6 +1079,8 @@ export function CanvasEditor({
                 onConnect={connect}
                 onEdgeDelete={deleteEdge}
                 onRunNode={runNode}
+                onEnhanceNode={node => enhanceNodeBrief(node.id)}
+                enhancingId={enhancingId}
               />
               <ZoomToolbar
                 viewport={viewport}

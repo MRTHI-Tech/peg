@@ -2,7 +2,7 @@
 
 import {useState} from 'react';
 import {createPortal} from 'react-dom';
-import {Eraser, Lock, LockOpen, Pencil, Play, Sparkles, Trash2} from 'lucide-react';
+import {Eraser, Lock, LockOpen, Pencil, Play, Sparkles, Trash2, Wand2} from 'lucide-react';
 
 import {Button} from '@astryxdesign/core/Button';
 import {DialogHeader, useImperativeDialog} from '@astryxdesign/core/Dialog';
@@ -32,6 +32,9 @@ interface Props {
   onHeaderPointerDown: (e: React.PointerEvent) => void;
   onOutputPointerDown: (e: React.PointerEvent, portId: string, type: string) => void;
   onRun: () => void;
+  /** Rewrite this brief as art direction. Absent on nodes that hold no brief. */
+  onEnhance?: () => void;
+  isEnhancing?: boolean;
   onClear: () => void;
   onRename: (title: string) => void;
   onToggleLock: () => void;
@@ -54,6 +57,8 @@ export function NodeCard({
   onHeaderPointerDown,
   onOutputPointerDown,
   onRun,
+  onEnhance,
+  isEnhancing = false,
   onClear,
   onRename,
   onToggleLock,
@@ -62,6 +67,7 @@ export function NodeCard({
   const ring = isSelected ? 'var(--color-accent)' : STATUS_RING[node.status];
   const isTextNode = node.text != null;
   const isBusy = node.status === 'queued' || node.status === 'running';
+  const briefText = (node.text ?? '').trim();
   const referenceImage = node.type === 'reference' ? String(node.params.image ?? '') : '';
   const previewUrl = node.result?.url || referenceImage;
   const renameDialog = useImperativeDialog({
@@ -122,7 +128,7 @@ export function NodeCard({
             </Text>
           </HStack>
           <HStack gap={1} align="center">
-            {isBusy && <Spinner size="sm" />}
+            {(isBusy || isEnhancing) && <Spinner size="sm" />}
             <span onPointerDown={e => e.stopPropagation()}>
               <MoreMenu
                 label={`${node.title} actions`}
@@ -152,8 +158,8 @@ export function NodeCard({
               maxBlockSize: 180,
               overflow: 'hidden',
             }}>
-            <Text type="supporting" color="secondary" maxLines={9}>
-              {node.text}
+            <Text type="supporting" color={briefText ? 'secondary' : 'disabled'} maxLines={9}>
+              {briefText || 'Write the brief in plain words. Enhance turns it into art direction.'}
             </Text>
           </div>
         ) : previewUrl ? (
@@ -198,6 +204,48 @@ export function NodeCard({
         )}
 
         {/* ----------------------------------------------------------- footer */}
+        {/* A brief is where a non-designer gets stuck, so the way out sits on
+            the card itself rather than behind a node they would have to know to
+            add. It rewrites in place; the inspector holds the revert. */}
+        {isTextNode && onEnhance && (
+          <HStack
+            gap={1}
+            align="center"
+            justify="end"
+            padding={1}
+            style={{borderBlockStart: '1px solid var(--color-border)'}}>
+            <button
+              type="button"
+              // The card starts a drag on pointerdown, so claim it first.
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => {
+                e.stopPropagation();
+                onEnhance();
+              }}
+              disabled={isEnhancing || !briefText}
+              title={briefText ? undefined : 'Write a line or two first'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--spacing-0-5)',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: isEnhancing ? 'progress' : briefText ? 'pointer' : 'not-allowed',
+                color: 'inherit',
+              }}>
+              <Icon
+                icon={Wand2}
+                size="xsm"
+                color={isEnhancing || !briefText ? 'disabled' : 'accent'}
+              />
+              <Text type="supporting" color={isEnhancing || !briefText ? 'disabled' : 'accent'}>
+                {isEnhancing ? 'Enhancing…' : 'Enhance'}
+              </Text>
+            </button>
+          </HStack>
+        )}
+
         {/* Only model-backed nodes can run. Brand nodes (Style Kit, Format,
             Product Asset) carry constraints, so offering them a Run button
             promises something that would silently do nothing. */}

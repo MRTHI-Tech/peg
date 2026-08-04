@@ -119,9 +119,15 @@ lib/
   types.ts              PegNode, Edge, Port, AssetRef, Provenance, NodeDef
   catalog.ts            every palette node + verified model IDs
   canvas-geometry.ts    world/screen math, bezier paths, connection validity
+  brief-context.ts      finds the canvas a brief is composed for (pure graph walk)
   mock-data.ts          fixtures
   workflow-service.ts   THE backend seam
   placeholder.ts        generated stand-in imagery
+service/
+  main.py               FastAPI routes; runs are submit-then-poll, /enhance is not
+  runner.py             generation, composition, and outpaint execution
+  brand.py              the brand kit document + palette extraction
+  enhance.py            rough brief -> art direction, via GMI chat completions
 ```
 
 ---
@@ -173,6 +179,25 @@ Everything below was checked against the **installed SDK** (`genblaze 0.4.5`, `g
 Untried siblings, likely also reachable: `gemini-3.1-flash-image`, `gemini-3-pro-image`, `gemini-2.5-flash-image`.
 
 Note each model returns its own fixed size (2048² vs 1024²) and none honour dimension params — expanding the canvas afterwards is still how we hit a breakpoint.
+
+### GMI also serves text, on an OpenAI-compatible endpoint
+
+Verified live on 2026-08-04. `GET https://api.gmi-serving.com/v1/models` with `GMI_API_KEY` returns **80 models**, most of them LLMs — Gemini, GPT, Claude, DeepSeek, Qwen, Kimi, GLM. `POST /v1/chat/completions` works with the standard OpenAI body.
+
+This is why the brief enhancer needs no second credential. `GEMINI_API_KEY` is declared in `.env.local` but **empty**, and nothing uses it.
+
+Measured on the same brief, with the enhancer's real system prompt:
+
+| Model | Latency | Reasoning tokens | Result |
+|---|---|---|---|
+| `google/gemini-3.5-flash-lite` | 3.8s | 0 | **chosen** — honoured palette, focal point, and copy-safe band |
+| `google/gemini-3.5-flash` | 11.5s | 1411 | same quality, three times the wait |
+| `google/gemini-3.6-flash` | 9.0s | 931 | same |
+| `openai/gpt-5.4-mini` | 2.6s | 0 | good, but reads as directives rather than a scene |
+
+Compatibility is thinner than the OpenAI shape suggests: the **GPT tier rejects `max_tokens`** and wants `max_completion_tokens`, and **Claude on this endpoint rejects `temperature`** outright (`ValidationException` from Bedrock). Changing `PEG_TEXT_MODEL` is a change worth testing.
+
+Budget generously for thinking models. At `max_tokens: 900`, `gemini-3.5-flash` spent the whole budget reasoning and returned a paragraph truncated mid-sentence — a silent-looking failure that is really a token ceiling.
 
 ### How the model registry actually behaves
 

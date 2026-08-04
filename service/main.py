@@ -6,6 +6,7 @@ is submit-then-poll rather than request-response.
 
     POST /runs        -> {run_id, status: "queued"}   returns immediately
     GET  /runs/{id}   -> {status, asset?, provenance?, error?}
+    POST /enhance     -> {brief, original, model}      text-only, answers directly
     GET  /health
 
 The Next.js route handlers proxy to this; the browser never sees it directly and
@@ -25,12 +26,15 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import brand
+import enhance as enhance_module
 import runner
 import workflows
 from schemas import (
     AssetKindIn,
     BrandAssetIn,
     BrandIn,
+    EnhanceRequest,
+    EnhanceResponse,
     RunRequest,
     RunResponse,
     RunStatus,
@@ -138,6 +142,7 @@ async def health() -> dict:
         "bucket": os.environ.get("B2_BUCKET"),
         "active_runs": active,
         "expand_configured": bool(os.environ.get("BRIA_API_TOKEN", "").strip()),
+        "enhance_configured": bool(os.environ.get("GMI_API_KEY", "").strip()),
     }
 
 
@@ -246,6 +251,43 @@ async def delete_brand_asset(
     except brand.BrandError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {**asdict(fresh), "is_complete": fresh.is_complete()}
+
+
+@app.post("/enhance", response_model=EnhanceResponse)
+async def enhance_brief(
+    payload: EnhanceRequest,
+    workspace: str = Depends(require_workspace),
+    _: None = Depends(require_token),
+) -> EnhanceResponse:
+    """Rewrite a rough brief as art direction, in the workspace's brand.
+
+    Answers directly rather than joining the submit-then-poll job store: this is
+    one text call of a few seconds, and making the user poll for a paragraph
+    would be the slower experience by some margin.
+
+    The brand is loaded here rather than sent by the browser, for the same
+    reason generation loads it here — the workspace owns it, and a client copy
+    could name a palette this workspace does not have.
+    """
+    try:
+        current = await asyncio.to_thread(brand.load_brand, workspace)
+    except Exception:  # noqa: BLE001 — a brand-less workspace still gets a rewrite
+        current = None
+
+    try:
+        text, model = await asyncio.to_thread(
+            enhance_module.enhance,
+            payload.brief,
+            current=current,
+            spec=payload.format,
+            intent=payload.intent,
+        )
+    except enhance_module.EnhanceError as exc:
+        # These messages are written to be read by the person who typed the
+        # brief, so they travel as 400 rather than a generic 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return EnhanceResponse(brief=text, original=payload.brief.strip(), model=model)
 
 
 @app.get("/projects")

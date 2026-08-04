@@ -153,6 +153,32 @@ class WorkflowIn(BaseModel):
     version: int = 1
 
 
+class EnhanceRequest(BaseModel):
+    """A rough brief on its way to becoming art direction.
+
+    `format` arrives when the brief already feeds a node with a target canvas,
+    which is what lets the rewrite compose for that breakpoint rather than
+    describe a picture in the abstract. It is optional because a brief written
+    before anything is wired up is still worth enhancing.
+    """
+
+    brief: str = Field(max_length=4000)
+    intent: str = Field(default="", max_length=80)
+    format: FormatSpec | None = None
+
+
+class EnhanceResponse(BaseModel):
+    """The rewrite, plus the original so the UI can offer a revert.
+
+    Nothing here is persisted service-side: an enhanced brief is a suggestion
+    until the user keeps it, and the canvas document is where it lands.
+    """
+
+    brief: str
+    original: str
+    model: str
+
+
 class RunResponse(BaseModel):
     run_id: str
     node_id: str | None = None
