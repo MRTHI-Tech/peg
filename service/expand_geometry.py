@@ -107,6 +107,22 @@ class SafeAreaOverlap:
         left, top, right, bottom = self.overlap_box
         return (right - left) * (bottom - top)
 
+    @property
+    def safe_pixels(self) -> int:
+        left, top, right, bottom = self.safe_box
+        return (right - left) * (bottom - top)
+
+    @property
+    def ratio(self) -> float:
+        """Fraction of the copy-safe band sitting on protected source pixels.
+
+        Absolute pixel counts say nothing on their own — 150k pixels is most of
+        a 1920x600 band and a corner of a 1080x1920 one. Callers threshold on
+        this instead.
+        """
+        total = self.safe_pixels
+        return self.pixels / total if total else 0.0
+
 
 @dataclass(frozen=True)
 class ExpandPlan:
@@ -472,6 +488,32 @@ def prepare_expand(source: Image.Image, fmt: FormatSpec) -> ExpandPlan:
         frame=frame_metadata,
         badge=badge_metadata,
     )
+
+
+SAFE_AREAS = ("upper-third", "lower-third", "left-third", "right-third", "center")
+
+
+def clear_safe_areas(source: Image.Image, fmt: FormatSpec) -> list[str]:
+    """Safe areas other than the requested one that fully clear the source.
+
+    Each candidate is re-planned rather than measured against the current
+    placement, because placement itself depends on the safe area: a free-
+    floating source seated for `left-third` sits vertically centred and appears
+    to block `upper-third`, when seating it for `upper-third` would clear that
+    band completely. Only reached once a run is already in trouble, so the extra
+    planning stays off the happy path.
+    """
+    clear: list[str] = []
+    for name in SAFE_AREAS:
+        if name == fmt.safe_area:
+            continue
+        try:
+            plan = prepare_expand(source, fmt.model_copy(update={"safe_area": name}))
+        except ExpandGeometryError:
+            continue
+        if safe_area_overlap(plan).overlap_box is None:
+            clear.append(name)
+    return clear
 
 
 def safe_area_overlap(plan: ExpandPlan) -> SafeAreaOverlap:

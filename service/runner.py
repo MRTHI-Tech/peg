@@ -22,7 +22,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import boto3
@@ -39,7 +39,12 @@ from genblaze_s3 import S3StorageBackend
 from schemas import AssetOut, ProvenanceOut, RunRequest
 from bria_expand import BriaExpandProvider
 from compositor import PegCompositorProvider
-from expand_geometry import finalize_expand, prepare_expand, safe_area_overlap
+from expand_geometry import (
+    clear_safe_areas,
+    finalize_expand,
+    prepare_expand,
+    safe_area_overlap,
+)
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
 
@@ -65,6 +70,17 @@ MAX_STYLE_REFERENCES = 3
 MAX_LOGO_REFERENCES = 2
 REFERENCE_EDGE = 1024
 
+# The most of a copy-safe band that may sit on protected source pixels when no
+# other band can do better. A fully clear band is unreachable whenever the
+# target's aspect ratio is close to the source's — 1:1 into 4:5 frees less new
+# height than a third of the canvas — so refusing every overlap made whole
+# presets unusable. Past half the band there is no useful copy space left.
+#
+# Half rather than the 40% the observed cases needed: a square source in a 4:5
+# portrait lands on exactly 0.40, and a threshold a rounding error away from the
+# preset it exists to allow is not a threshold.
+SAFE_AREA_MAX_OVERLAP = 0.50
+
 # Duplicate subjects and brand chrome in expanded pixels are always failures.
 DEFAULT_NEGATIVE = (
     "podium, pedestal, cylinder, platform, pillar, object, product, duplicate, "
@@ -87,6 +103,10 @@ class RunOutcome:
     attempts: int
     asset: AssetOut
     provenance: ProvenanceOut
+    # Non-fatal notes about the result the user should see. A run that produced
+    # a real asset must never be reported as failed, so these ride alongside a
+    # successful outcome rather than becoming an error.
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -613,14 +633,36 @@ def run_outpaint(req: RunRequest, workspace: str) -> RunOutcome:
         raise RunFailed("outpaint requires source_asset_key or source_b64")
 
     with Image.open(io.BytesIO(raw)) as im:
-        plan = prepare_expand(im.convert("RGB"), req.format)
+        # convert() detaches from the file handle, so this survives the close
+        # and can be re-planned when a safe area needs alternatives suggested.
+        source = im.convert("RGB")
+    plan = prepare_expand(source, req.format)
 
+    # Whether an overlap is acceptable depends on what else was available, not
+    # on the raw number. If some other band clears the source completely, say so
+    # and refuse — using a worse one would be a silent downgrade. If nothing
+    # clears it, the best band on offer is the only copy space there is, so a
+    # partial overlap becomes a warning rather than a dead end.
+    warnings: list[str] = []
     overlap = safe_area_overlap(plan)
     if overlap.overlaps:
-        raise RunFailed(
-            f"{req.format.safe_area} safe area overlaps {overlap.pixels} protected "
-            "source pixels; choose copy space outside the source or use a clean "
-            "source with a compatible placement"
+        alternatives = clear_safe_areas(source, req.format)
+        if alternatives:
+            raise RunFailed(
+                f"{req.format.safe_area} safe area is {overlap.ratio:.0%} covered by "
+                f"protected source pixels; try {' or '.join(alternatives)} instead"
+            )
+        if overlap.ratio > SAFE_AREA_MAX_OVERLAP:
+            raise RunFailed(
+                f"{req.format.safe_area} safe area is {overlap.ratio:.0%} covered by "
+                "protected source pixels and no other safe area clears this source; "
+                "expand to a taller or wider canvas, or start from a source with a "
+                "different aspect ratio"
+            )
+        warnings.append(
+            f"{req.format.safe_area} safe area is {overlap.ratio:.0%} covered by "
+            "source pixels — no safe area clears this source at this target, so "
+            "check headline legibility over that edge"
         )
     if plan.original_image_size == plan.canvas_size and plan.original_image_location == (0, 0):
         raise RunFailed("target format does not extend the source canvas")
@@ -675,7 +717,9 @@ def run_outpaint(req: RunRequest, workspace: str) -> RunOutcome:
             f"outpaint returned {asset.width}x{asset.height}; expected "
             f"{req.format.width}x{req.format.height}"
         )
-    return RunOutcome(run_id=run_id, attempts=1, asset=asset, provenance=prov)
+    return RunOutcome(
+        run_id=run_id, attempts=1, asset=asset, provenance=prov, warnings=warnings
+    )
 
 
 def _variant_score(filename: str) -> int:

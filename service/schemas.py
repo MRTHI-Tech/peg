@@ -161,3 +161,6 @@ class RunResponse(BaseModel):
     error: str | None = None
     asset: AssetOut | None = None
     provenance: ProvenanceOut | None = None
+    # Non-fatal notes on a run that still succeeded — e.g. copy-safe space that
+    # partly overlaps the preserved source. Never a substitute for `error`.
+    warnings: list[str] = Field(default_factory=list)

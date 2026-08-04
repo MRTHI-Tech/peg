@@ -157,13 +157,19 @@ class RunnerOutpaintTests(unittest.TestCase):
                 runner.run_outpaint(request, "test")
 
     def test_unachievable_safe_area_is_rejected_without_calling_provider(self) -> None:
+        """Barely widening a square leaves the copy band almost entirely on it.
+
+        520x500 from 500x500 covers 88% of the left third and no other band does
+        better, so there is no usable copy space at all. Rejecting before the
+        provider is constructed is the point — this must never cost a request.
+        """
         source = io.BytesIO()
         Image.new("RGB", (500, 500), (40, 50, 60)).save(source, format="PNG")
         request = RunRequest(
             operation="outpaint",
             source_b64=base64.b64encode(source.getvalue()).decode(),
             format=FormatSpec(
-                width=600,
+                width=520,
                 height=500,
                 focal_point="right",
                 safe_area="left-third",
@@ -174,10 +180,83 @@ class RunnerOutpaintTests(unittest.TestCase):
             patch.dict("os.environ", {"BRIA_API_TOKEN": "direct-token"}),
             patch.object(runner, "BriaExpandProvider", _FakeProvider),
         ):
-            with self.assertRaisesRegex(runner.RunFailed, "overlaps"):
+            with self.assertRaisesRegex(runner.RunFailed, "no other safe area clears"):
                 runner.run_outpaint(request, "test")
 
         self.assertEqual(_FakeProvider.instances, [])
+
+    def test_overlap_is_refused_when_another_safe_area_would_clear_the_source(self) -> None:
+        """A usable band elsewhere means the chosen one is a downgrade, not a cost.
+
+        A 1:1 source in a 1080x1920 story spans the full width, so left-third
+        sits on preserved pixels while upper-third is completely clear. Naming
+        the alternative is the whole point -- the old message said only that an
+        overlap existed, which left the user with nothing to change.
+        """
+        source = io.BytesIO()
+        Image.new("RGB", (500, 500), (40, 50, 60)).save(source, format="PNG")
+        request = RunRequest(
+            operation="outpaint",
+            source_b64=base64.b64encode(source.getvalue()).decode(),
+            format=FormatSpec(
+                width=1080, height=1920, focal_point="right", safe_area="left-third"
+            ),
+        )
+
+        with (
+            patch.dict("os.environ", {"BRIA_API_TOKEN": "direct-token"}),
+            patch.object(runner, "BriaExpandProvider", _FakeProvider),
+        ):
+            with self.assertRaisesRegex(runner.RunFailed, "try upper-third"):
+                runner.run_outpaint(request, "test")
+
+        self.assertEqual(_FakeProvider.instances, [])
+
+    def test_partial_overlap_warns_and_still_runs_when_nothing_clears(self) -> None:
+        """1:1 into 4:5 frees less height than a third of the canvas.
+
+        No band can be fully clear, so refusing the run made the whole preset
+        unusable. The best available band is real copy space and the run must
+        produce its asset -- carrying a warning, never an error.
+        """
+        source = io.BytesIO()
+        Image.new("RGB", (500, 500), (40, 50, 60)).save(source, format="PNG")
+        request = RunRequest(
+            operation="outpaint",
+            source_b64=base64.b64encode(source.getvalue()).decode(),
+            format=FormatSpec(
+                width=1080, height=1350, focal_point="right", safe_area="upper-third"
+            ),
+        )
+
+        asset = AssetOut(
+            asset_key="peg/workspaces/test/runs/portrait.png",
+            bucket="test",
+            url="https://example.invalid/portrait.png",
+            width=1080,
+            height=1350,
+        )
+
+        with (
+            patch.dict("os.environ", {"BRIA_API_TOKEN": "direct-token"}),
+            patch.object(runner, "BriaExpandProvider", _FakeProvider),
+            patch.object(runner, "Pipeline", _FakePipeline),
+            patch.object(runner, "_sink", return_value=object()),
+            patch.object(
+                runner,
+                "_collect_run_output",
+                return_value=(
+                    asset,
+                    ProvenanceOut(run_id="direct-expand-run", model=runner.EXPAND_MODEL),
+                ),
+            ),
+        ):
+            outcome = runner.run_outpaint(request, "test")
+
+        self.assertEqual(len(outcome.warnings), 1)
+        self.assertIn("upper-third", outcome.warnings[0])
+        self.assertIn("check headline legibility", outcome.warnings[0])
+        self.assertEqual((outcome.asset.width, outcome.asset.height), (1080, 1350))
 
 
 if __name__ == "__main__":

@@ -188,6 +188,11 @@ export interface PegNode {
   provenance?: Provenance;
   /** Failure reason from the last run, surfaced on the node and the inspector. */
   error?: string;
+  /**
+   * Non-fatal notes from the last successful run. Kept separate from `error`
+   * so a run that produced a real asset never reads as a failure.
+   */
+  warnings?: string[];
 }
 
 export interface Edge {

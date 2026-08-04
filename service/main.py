@@ -90,6 +90,7 @@ async def _execute(job_id: str, req: RunRequest, workspace: str) -> None:
             job.attempts = outcome.attempts
             job.asset = outcome.asset
             job.provenance = outcome.provenance
+            job.warnings = outcome.warnings
 
 
 def require_token(x_peg_token: str | None = Header(default=None)) -> None:

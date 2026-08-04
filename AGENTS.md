@@ -225,6 +225,45 @@ The current shape, all of it in `service/expand_geometry.py` and `service/bria_e
 
 Step 5 is the point. **The model is never asked to reproduce anything we already have.** It supplies only newly revealed scene; every protected pixel is restored deterministically, so brand chrome cannot drift.
 
+### The safe area must sit on the axis the target actually frees
+
+Extend Canvas contains the whole source rather than cropping it, and that has a
+consequence worth internalising before touching `_placement`:
+
+- A source at least as wide as it is tall, contained in a **portrait** target,
+  scales to the target's full *width*. It spans the canvas edge to edge, so a
+  `left-third` or `right-third` band is entirely preserved pixels and **no
+  placement can avoid it**.
+- The same source in a **landscape** target scales to full *height* and leaves
+  horizontal room, so `left-third` works and `upper-third`/`lower-third` do not.
+
+A fixed `Left third` default therefore guaranteed a failed run on every portrait
+preset. `safeAreaForTarget` in `lib/formats.ts` moves the band when the target
+changes; it only ever moves one that cannot work, and leaves `Center` alone.
+
+Whether a *remaining* overlap is acceptable depends on what else was on offer,
+not on the raw number:
+
+| Situation | Behaviour |
+|---|---|
+| No overlap | runs |
+| Another band clears the source completely | **refused**, naming that band |
+| Nothing clears, ≤ `SAFE_AREA_MAX_OVERLAP` (50%) | runs, with a warning |
+| Nothing clears, > 50% | refused |
+
+The middle row is the one that matters: a clean alternative means the chosen
+band is a silent downgrade, so it is refused rather than warned. The third row
+exists because a fully clear band is unreachable whenever the target's aspect
+ratio is close to the source's — 1:1 into 4:5 frees less new height than a third
+of the canvas — and refusing those made the whole Instagram-portrait preset
+unusable. Warnings ride on a **successful** `RunOutcome`; a run that produced an
+asset must never be reported as failed.
+
+`clear_safe_areas` re-plans each candidate rather than measuring it against the
+current placement, because placement itself depends on the safe area. Measuring
+in place reports "nothing clears" for a free-floating source that would in fact
+be fine once re-seated, which is worse than no advice at all.
+
 Non-obvious details:
 
 - **Send the source at its rendered size.** `model_input` is already resized to `original_image_size`. Uploading a 2048² plate and declaring a 600px render wastes payload and invites disagreement.
@@ -322,7 +361,7 @@ Do not hand-roll object keys. Manifest top-level shape is `canonical_hash`, `enc
 
 **The brand lock is now palette-only for any new brand, and nothing fills the gap yet.** The brand form no longer asks for a look description — a marketing team briefs each campaign on the canvas instead — so `Brand.prompt_prefix()` emits only the extracted hex values unless a `description` was stored by an earlier version. That removes the one conditioning mechanism actually proven to hold. The intended fix is deriving the description from the uploaded style references (the unbuilt Read Style node, `GEMINI_API_KEY`); until that exists, expect weaker brand adherence than the smoke tests showed. `description` is still read and honoured, and `PUT /brand` deliberately does not accept it so an empty form cannot erase one.
 
-**Only the unframed path has had a live run.** `expand_test.py` proved a clean square plate → 1920×600. The *framed* branch of `prepare_expand` — flat brand frame peeled and rebuilt, corner lockup locked to bottom-right — is unit-tested only. Run `expand_test.py` against a framed source before trusting Extend Canvas on finished artwork.
+**Portrait output has not been eyeballed.** Landscape is confirmed good on real framed artwork through the deployed canvas, and `expand_test.py` proved a clean plate → 1920×600. Portrait targets only started running once the safe-area rule was relaxed, so `1080×1350` — the case that runs *with a warning* at ~31% overlap — has never been looked at. Check that a headline over that band is actually legible before treating the preset as shipped; if it is not, `SAFE_AREA_MAX_OVERLAP` is the dial.
 
 ## Commands
 

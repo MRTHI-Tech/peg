@@ -17,7 +17,7 @@ import {
   screenToWorld,
   type Viewport,
 } from '@/lib/canvas-geometry';
-import {toOutpaintFormat, toRunFormat} from '@/lib/formats';
+import {presetSize, safeAreaForTarget, toOutpaintFormat, toRunFormat} from '@/lib/formats';
 import {executeInDependencyOrder, isExecutableNode} from '@/lib/graph-execution';
 import {useBrand} from '@/lib/use-brand';
 import {useMediaQuery} from '@/lib/use-media-query';
@@ -480,13 +480,32 @@ export function CanvasEditor({
     updateEdges(current => current.filter(e => e.id !== id));
   }, [updateEdges]);
 
+  /**
+   * Move the copy-safe band when a new target makes the current one impossible.
+   *
+   * Picking a portrait preset used to leave `Left third` in place, which the
+   * service then had to refuse — a source contained in a portrait canvas spans
+   * its full width, so that band is entirely preserved pixels. Correcting it
+   * here keeps the failure from ever reaching a paid request.
+   */
+  const applySafeAreaForTarget = (
+    params: Record<string, ParamValue>,
+    key: string,
+  ): Record<string, ParamValue> => {
+    if (key !== 'preset' && key !== 'resolution') return params;
+    const size = presetSize(String(params[key] ?? ''));
+    if (!size) return params;
+    const safeArea = safeAreaForTarget(size.width, size.height, String(params.safeArea ?? ''));
+    return safeArea === params.safeArea ? params : {...params, safeArea};
+  };
+
   const updateParam = useCallback((nodeId: string, key: string, value: ParamValue) => {
     updateNodes(current =>
       current.map(n =>
         n.id === nodeId
           ? {
               ...n,
-              params: {...n.params, [key]: value},
+              params: applySafeAreaForTarget({...n.params, [key]: value}, key),
               // Brief cards and their inspector field are two views of one value.
               text: n.type === 'prompt' && key === 'value' ? String(value) : n.text,
               // Brand Asset is a zero-cost source node. Selecting an approved
@@ -758,6 +777,7 @@ export function CanvasEditor({
           result: toAssetRef(result),
           provenance: toProvenance(result, node.id),
           error: undefined,
+          warnings: result.warnings?.length ? result.warnings : undefined,
         });
         return true;
       } catch (error) {

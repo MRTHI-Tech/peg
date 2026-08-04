@@ -210,6 +210,29 @@ function SingleNodeFields({
         </>
       )}
 
+      {/* A warned run still produced an asset, so this reads as an advisory
+          rather than borrowing the failure block's error colour. */}
+      {node.status === 'complete' && node.warnings?.length ? (
+        <>
+          <Divider />
+          <VStack gap={1}>
+            <Text type="supporting" color="secondary">
+              Check before shipping
+            </Text>
+            {node.warnings.map(warning => (
+              <Text
+                key={warning}
+                type="supporting"
+                maxLines={6}
+                style={{color: 'var(--color-warning)'}}
+              >
+                {warning}
+              </Text>
+            ))}
+          </VStack>
+        </>
+      ) : null}
+
       {node.result && (
         <>
           <Divider />

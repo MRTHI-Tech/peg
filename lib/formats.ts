@@ -169,6 +169,34 @@ const SAFE_AREA: Record<string, RunFormat['safe_area']> = {
   Center: 'center',
 };
 
+const HORIZONTAL_BANDS = new Set(['Left third', 'Right third']);
+const VERTICAL_BANDS = new Set(['Upper third', 'Lower third']);
+
+/**
+ * Keep the copy-safe band on the axis the target actually frees up.
+ *
+ * Extend Canvas contains the whole source rather than cropping it, so a source
+ * at least as wide as it is tall fills a portrait target edge to edge — a
+ * left- or right-third band then sits entirely on preserved pixels and there is
+ * no placement that avoids it. Landscape targets have the mirror problem with
+ * upper/lower thirds. A fixed `Left third` default therefore guaranteed a
+ * failed run on every portrait preset, which is what this corrects.
+ *
+ * Only ever moves a band that cannot work; an explicit compatible choice and
+ * `Center` are both left alone.
+ */
+export function safeAreaForTarget(width: number, height: number, current: string): string {
+  if (height > width && HORIZONTAL_BANDS.has(current)) return 'Upper third';
+  if (width > height && VERTICAL_BANDS.has(current)) return 'Left third';
+  return current;
+}
+
+/** Resolve a stored preset value to its target dimensions, if it names one. */
+export function presetSize(value: string): {width: number; height: number} | null {
+  const preset = BY_VALUE.get(value) ?? LEGACY_PRESETS.get(value);
+  return preset ? {width: preset.width, height: preset.height} : null;
+}
+
 /** Turn a Format node's params into the geometry the service expects. */
 export function toRunFormat(params: Record<string, string | number | boolean>): RunFormat {
   const storedValue = String(params.preset ?? params.resolution ?? '');

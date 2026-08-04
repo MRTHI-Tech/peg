@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw  # noqa: E402
 
 from expand_geometry import (  # noqa: E402
     ExpandGeometryError,
+    clear_safe_areas,
     finalize_expand,
     prepare_expand,
     safe_area_overlap,
@@ -229,3 +230,50 @@ class ExpandGeometryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafeAreaAlternativeTests(unittest.TestCase):
+    def test_ratio_scales_overlap_against_the_band_it_covers(self) -> None:
+        """Raw pixel counts are meaningless across differently shaped bands.
+
+        The same ~150k pixels is most of a 1920x600 left third and a corner of a
+        1080x1920 one, so callers threshold on the fraction instead.
+        """
+        source = Image.new("RGB", (1024, 1024), (40, 50, 60))
+        plan = prepare_expand(
+            source, FormatSpec(width=1080, height=1350, safe_area="upper-third")
+        )
+        overlap = safe_area_overlap(plan)
+
+        self.assertEqual(overlap.pixels / overlap.safe_pixels, overlap.ratio)
+        self.assertEqual(overlap.safe_pixels, 1080 * (1350 // 3))
+
+    def test_alternatives_are_replanned_not_measured_against_current_placement(
+        self,
+    ) -> None:
+        """Placement depends on the safe area, so candidates must be re-planned.
+
+        A free-floating source seated for `left-third` sits vertically centred
+        and looks like it blocks `upper-third`; seating it for `upper-third`
+        pushes it down and clears that band completely. Measuring candidates
+        against the left-third placement would report no alternatives and leave
+        the user with nothing to change.
+        """
+        source = Image.new("RGB", (1024, 1024), (40, 50, 60))
+        fmt = FormatSpec(width=1080, height=1920, safe_area="left-third")
+
+        self.assertTrue(safe_area_overlap(prepare_expand(source, fmt)).overlaps)
+        alternatives = clear_safe_areas(source, fmt)
+
+        self.assertIn("upper-third", alternatives)
+        self.assertNotIn("left-third", alternatives)
+        for name in alternatives:
+            candidate = prepare_expand(source, fmt.model_copy(update={"safe_area": name}))
+            self.assertFalse(safe_area_overlap(candidate).overlaps)
+
+    def test_no_alternative_exists_when_the_ratio_change_is_too_small(self) -> None:
+        """1:1 into 4:5 frees less new height than a third of the canvas."""
+        source = Image.new("RGB", (1024, 1024), (40, 50, 60))
+        fmt = FormatSpec(width=1080, height=1350, safe_area="upper-third")
+
+        self.assertEqual(clear_safe_areas(source, fmt), [])

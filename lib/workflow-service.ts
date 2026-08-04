@@ -89,6 +89,8 @@ export interface RunResult {
   status: RunStatus;
   attempts: number;
   error?: string | null;
+  /** Non-fatal notes on a run that still produced an asset. */
+  warnings?: string[];
   asset?: {
     asset_key: string;
     bucket: string;
